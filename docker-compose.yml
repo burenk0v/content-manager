@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15
+    container_name: db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: content_manager
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: ./backend
+    container_name: back
+    restart: always
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/content_manager
+      SECRET_KEY: supersecretkey
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    container_name: front
+    restart: always
+    depends_on:
+      - backend
+    environment:
+      API_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+
+  telegram:
+    build: ./telegram
+    container_name: bot
+    restart: always
+    depends_on:
+      - frontend
+    environment:
+      WEBAPP_URL: http://frontend:3000
+      BOT_TOKEN: your_bot_token_here
+
+volumes:
+  postgres_data:
