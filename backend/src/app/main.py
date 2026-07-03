@@ -1,6 +1,6 @@
-from backend.src.app.routers import auth
+from src.app.routers import auth
 from fastapi import FastAPI
-from backend.src.app.routers import content
+from src.app.routers import content
 
 app = FastAPI()
 

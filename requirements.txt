@@ -1,0 +1,3 @@
+-r backend/src/requirements.txt
+-r frontend/src/requirements.txt
+-r telegram/src/requirements.txt

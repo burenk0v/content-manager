@@ -1,9 +1,7 @@
-version: "3.9"
-
 services:
-  db:
+  database:
     image: postgres:15
-    container_name: db
+    container_name: database
     restart: always
     environment:
       POSTGRES_USER: postgres
@@ -16,10 +14,10 @@ services:
 
   backend:
     build: ./backend
-    container_name: back
+    container_name: backend
     restart: always
     depends_on:
-      - db
+      - database
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/content_manager
       SECRET_KEY: supersecretkey
@@ -28,24 +26,24 @@ services:
 
   frontend:
     build: ./frontend
-    container_name: front
+    container_name: frontend
     restart: always
     depends_on:
       - backend
     environment:
-      API_URL: http://backend:8000
+      BACKEND_API_URL: http://backend:8000
     ports:
       - "3000:3000"
 
   telegram:
     build: ./telegram
-    container_name: bot
+    container_name: telegram
     restart: always
     depends_on:
       - frontend
     environment:
       WEBAPP_URL: http://frontend:3000
-      BOT_TOKEN: your_bot_token_here
+      BOT_TOKEN: ${BOT_TOKEN}
 
 volumes:
   postgres_data:

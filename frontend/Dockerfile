@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Set working directory
 WORKDIR /app
@@ -15,5 +15,10 @@ COPY . .
 # Expose the port the app runs on
 EXPOSE 8000
 
+# Prepare for run the application
+RUN python src/manage.py makemigrations
+RUN python src/manage.py migrate
+RUN echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('admin', 'admin@myproject.com', 'admin')" | python src/manage.py shell
+
 # Run the application
-CMD ["python", "src/manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["python", "src/manage.py", "runserver", "0.0.0.0:3000"]
