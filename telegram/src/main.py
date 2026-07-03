@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+from html import escape
 from urllib.parse import urlparse
 
 from aiogram import Bot, Dispatcher, types
@@ -38,11 +39,82 @@ WEBAPP_URL = get_webapp_url()
 from openai_client import OpenAIClient
 
 
-def format_for_markdown_v2(text: str) -> str:
+def looks_like_html(text: str) -> bool:
+    if not text:
+        return False
+    return bool(re.search(r"</?[a-zA-Z][^>]*>", text))
+
+
+def sanitize_telegram_html(text: str) -> str:
     if not text:
         return text
-    # Escape Telegram MarkdownV2 special characters so AI-generated markdown is displayed safely.
-    return re.sub(r'([_\\*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
+
+    allowed_tags = {"b", "i", "u", "code", "pre", "a"}
+    allowed_attrs = {"a": {"href"}}
+
+    def repl(match: re.Match[str]) -> str:
+        tag = match.group(1).lower()
+        if tag not in allowed_tags:
+            return ""
+        attrs = match.group(2) or ""
+        if tag == "a":
+            href_match = re.search(r'href=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+            if not href_match:
+                return ""
+            href = href_match.group(1)
+            if not href.startswith(("http://", "https://")):
+                return ""
+            return f'<a href="{escape(href, quote=True)}">'
+        return f"<{tag}>"
+
+    text = re.sub(r"</([a-zA-Z0-9]+)>", lambda m: f"</{m.group(1).lower()}>" if m.group(1).lower() in allowed_tags else "", text)
+    text = re.sub(r"<([a-zA-Z0-9]+)([^>]*)>", lambda m: repl(m) if m.group(1).lower() in allowed_tags else "", text)
+    return text
+
+
+def prepare_telegram_content(text: str) -> str:
+    if not text:
+        return text
+
+    text = text.strip()
+    if looks_like_html(text):
+        return sanitize_telegram_html(text)
+
+    lines = text.splitlines()
+    result = []
+    in_code_block = False
+    code_lines = []
+
+    for line in lines:
+        if line.strip().startswith("```"):
+            if in_code_block:
+                result.append(f"<pre><code>{escape('\n'.join(code_lines))}</code></pre>")
+                code_lines = []
+                in_code_block = False
+            else:
+                in_code_block = True
+            continue
+
+        if in_code_block:
+            code_lines.append(line)
+            continue
+
+        rendered = escape(line)
+        rendered = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', rendered)
+        rendered = re.sub(r'__(.+?)__', r'<b>\1</b>', rendered)
+        rendered = re.sub(r'\*(.+?)\*', r'<i>\1</i>', rendered)
+        rendered = re.sub(r'_(.+?)_', r'<i>\1</i>', rendered)
+        rendered = re.sub(r'`([^`]+)`', r'<code>\1</code>', rendered)
+
+        if re.match(r'^- ', rendered):
+            rendered = "• " + rendered[2:]
+
+        result.append(rendered)
+
+    if in_code_block:
+        result.append(f"<pre><code>{escape('\n'.join(code_lines))}</code></pre>")
+
+    return "\n".join(result)
 
 
 async def main():
@@ -94,8 +166,8 @@ async def main():
                 return
             await message.answer("Processing your request with OpenAI...")
             result = ai_client.chat(prompt)
-            safe_result = format_for_markdown_v2(result)
-            await message.answer(safe_result, parse_mode="MarkdownV2")
+            telegram_content = prepare_telegram_content(result)
+            await message.answer(telegram_content, parse_mode="HTML")
 
     # Запуск поллинга
     await dp.start_polling(bot)

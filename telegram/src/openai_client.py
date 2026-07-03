@@ -42,12 +42,16 @@ class OpenAIClient:
                 },
                 {
                     "role": "system",
-                    "content": 
-                        "Use markdown formatting for telegram messages. "
-                        "If the answer is a code snippet, provide it in a code block. "
-                        "If the answer is a list, provide it as a numbered list. "
-                        "If the answer is a table, provide it in markdown table format. "
-                        "Try to doesnot exceed 4000 characters in the answer.",
+                    "content": (
+                        "You are generating output for Telegram. "
+                        "Return only a single ready-to-send Telegram HTML snippet. "
+                        "Do not include any explanation, markdown, code fences, or surrounding text. "
+                        "Use only these tags: <b>, <i>, <u>, <code>, <pre><code>, and <a href=\"...\">text</a>. "
+                        "Do not use headings, tables, or unsupported tags. "
+                        "Use short paragraphs and simple bullet-like lines. "
+                        "If the user asks for a URL, return it immediately as a direct <a href=\"https://...\">https://...</a> link. "
+                        "Keep the answer under 2000 characters."
+                    ),
                 },
                 {
                     "role": "user",
