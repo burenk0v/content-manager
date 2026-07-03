@@ -13,7 +13,8 @@ SECRET_KEY = 'django-insecure-345678901234567890123456789012345678901234567890'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', 'frontend']
+CSRF_TRUSTED_ORIGINS = ['https://localhost:8443', 'https://127.0.0.1:8443']
 
 # Application definition
 INSTALLED_APPS = [
@@ -23,6 +24,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_extensions',
     'auth_app',
 ]
 

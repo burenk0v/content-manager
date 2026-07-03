@@ -1,1 +1,3 @@
 aiogram
+openai
+tenacity

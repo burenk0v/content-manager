@@ -27,7 +27,12 @@ def dashboard_view(request):
     backend_url = os.environ.get('BACKEND_API_URL', 'http://localhost:8000/api')
     
     try:
-        response = requests.get(backend_url, timeout=5)
+        headers = {}
+        service_token = os.environ.get('SERVICE_ACCOUNT_TOKEN')
+        if service_token:
+            headers['X-Service-Token'] = service_token
+
+        response = requests.get(backend_url, headers=headers, timeout=5)
         if response.status_code == 200 and response.json()["status"] == 'Backend running':
             backend_status = "Работает"
         else:

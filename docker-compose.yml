@@ -33,7 +33,7 @@ services:
     environment:
       BACKEND_API_URL: http://backend:8000
     ports:
-      - "3000:3000"
+      - "8443:443"
 
   telegram:
     build: ./telegram
@@ -42,8 +42,11 @@ services:
     depends_on:
       - frontend
     environment:
-      WEBAPP_URL: http://frontend:3000
+      WEBAPP_URL: ${WEBAPP_URL:-https://example.com}
       BOT_TOKEN: ${BOT_TOKEN}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ADMINS: ${ADMINS}
+      SERVICE_ACCOUNT_TOKEN: ${SERVICE_ACCOUNT_TOKEN}
 
 volumes:
   postgres_data:
