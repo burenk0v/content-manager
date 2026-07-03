@@ -50,12 +50,21 @@ def sanitize_telegram_html(text: str) -> str:
         return text
 
     allowed_tags = {"b", "i", "u", "code", "pre", "a"}
-    allowed_attrs = {"a": {"href"}}
+    stack: list[str] = []
 
-    def repl(match: re.Match[str]) -> str:
+    def replace_tag(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if raw.startswith("</"):
+            tag = match.group(1).lower()
+            if tag in allowed_tags and stack and stack[-1] == tag:
+                stack.pop()
+                return f"</{tag}>"
+            return ""
+
         tag = match.group(1).lower()
         if tag not in allowed_tags:
             return ""
+
         attrs = match.group(2) or ""
         if tag == "a":
             href_match = re.search(r'href=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
@@ -64,12 +73,17 @@ def sanitize_telegram_html(text: str) -> str:
             href = href_match.group(1)
             if not href.startswith(("http://", "https://")):
                 return ""
+            stack.append(tag)
             return f'<a href="{escape(href, quote=True)}">'
+
+        stack.append(tag)
         return f"<{tag}>"
 
-    text = re.sub(r"</([a-zA-Z0-9]+)>", lambda m: f"</{m.group(1).lower()}>" if m.group(1).lower() in allowed_tags else "", text)
-    text = re.sub(r"<([a-zA-Z0-9]+)([^>]*)>", lambda m: repl(m) if m.group(1).lower() in allowed_tags else "", text)
-    return text
+    sanitized = re.sub(r"</?([a-zA-Z0-9]+)([^>]*)>", replace_tag, text)
+    while stack:
+        tag = stack.pop()
+        sanitized += f"</{tag}>"
+    return sanitized
 
 
 def prepare_telegram_content(text: str) -> str:
