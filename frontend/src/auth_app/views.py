@@ -2,12 +2,12 @@ from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
 import requests
 import os
 
+
 def login_view(request):
-    """Страница входа"""
+    """Login page"""
     if request.method == 'POST':
         username = request.POST['username']
         password = request.POST['password']
@@ -16,14 +16,14 @@ def login_view(request):
             login(request, user)
             return redirect('auth_app:dashboard')
         else:
-            messages.error(request, 'Неверное имя пользователя или пароль')
+            messages.error(request, 'Invalid username or password')
     
     return render(request, 'auth_app/login.html')
 
 @login_required
 def dashboard_view(request):
-    """Защищенная страница после входа"""
-    backend_status = "Неизвестно"
+    """Protected page after login"""
+    backend_status = "Unknown"
     backend_url = os.environ.get('BACKEND_API_URL', 'http://localhost:8000/api')
     
     try:
@@ -34,11 +34,11 @@ def dashboard_view(request):
 
         response = requests.get(backend_url, headers=headers, timeout=5)
         if response.status_code == 200 and response.json()["status"] == 'Backend running':
-            backend_status = "Работает"
+            backend_status = "Running"
         else:
-            backend_status = "Не работает"
+            backend_status = "Not working"
     except Exception:
-        backend_status = "Не работает"
+        backend_status = "Not working"
     
     return render(request, 'auth_app/dashboard.html', {'backend_status': backend_status})
 

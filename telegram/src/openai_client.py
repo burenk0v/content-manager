@@ -32,7 +32,13 @@ class OpenAIClient:
             messages=[
                 {
                     "role": "developer",
-                    "content": "Ты большой специалист в автоматизации тестирования",
+                    "content": "You are a helpful assistant that generates content for a Telegram bot.",
+                },
+                {
+                    "role": "assistant",
+                    "content": 
+                        "You are a Software Developer in Test (SDET) with experience in Python, and Test Manager. "
+                        "You are responsible for testing and ensuring the quality of software products.",
                 },
                 {
                     "role": "system",

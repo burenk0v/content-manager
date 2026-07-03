@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from urllib.parse import urlparse
 
 from aiogram import Bot, Dispatcher, types
@@ -37,6 +38,13 @@ WEBAPP_URL = get_webapp_url()
 from openai_client import OpenAIClient
 
 
+def format_for_markdown_v2(text: str) -> str:
+    if not text:
+        return text
+    # Escape Telegram MarkdownV2 special characters so AI-generated markdown is displayed safely.
+    return re.sub(r'([_\\*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
+
+
 async def main():
     # Инициализация бота и диспетчера
     bot = Bot(token=BOT_TOKEN)
@@ -52,7 +60,7 @@ async def main():
     async def start_command(message: types.Message):
         uid = message.from_user.id
         if not is_admin(uid):
-            await message.answer("Доступ разрешён только администраторам.")
+            await message.answer("Access is allowed only for administrators.")
             return
 
         if WEBAPP_URL:
@@ -63,12 +71,12 @@ async def main():
                 )]
             ])
             await message.answer(
-                "Нажмите кнопку ниже, чтобы открыть WebApp:",
+                "Click the button below to open the WebApp:",
                 reply_markup=keyboard
             )
         else:
             await message.answer(
-                "WebApp пока недоступен. Настройте публичный HTTPS URL в переменной WEBAPP_URL."
+                "WebApp is currently unavailable. Configure a public HTTPS URL in the WEBAPP_URL environment variable."
             )
 
     @dp.message()
@@ -82,11 +90,12 @@ async def main():
             # support: /ask <prompt>
             prompt = text[len('/ask'):].strip()
             if not prompt:
-                await message.answer("Пожалуйста, укажите запрос после команды /ask")
+                await message.answer("Please provide a request after the /ask command")
                 return
-            await message.answer("Обрабатываю запрос через OpenAI...")
+            await message.answer("Processing your request with OpenAI...")
             result = ai_client.chat(prompt)
-            await message.answer(result)
+            safe_result = format_for_markdown_v2(result)
+            await message.answer(safe_result, parse_mode="MarkdownV2")
 
     # Запуск поллинга
     await dp.start_polling(bot)

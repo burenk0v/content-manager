@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Панель управления</title>
+    <title>Dashboard</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -56,16 +56,16 @@
 </head>
 <body>
     <div class="container">
-        <h1>Добро пожаловать!</h1>
-        <p class="welcome">Вы вошли как {{ user.username }}</p>
+        <h1>Welcome!</h1>
+        <p class="welcome">You are logged in as {{ user.username }}</p>
         
         <div class="status 
-            {% if backend_status == 'Работает' %}status-running{% else %}status-not-running{% endif %}">
-            Статус Backend: {{ backend_status }}
+            {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
+            Backend status: {{ backend_status }}
         </div>
         
-        <p>Это защищенная страница. Вы можете добавить здесь любую информацию.</p>
-        <a href="{% url 'auth_app:logout' %}" class="logout-link">Выйти</a>
+        <p>This is a protected page. You can add any information here.</p>
+        <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>
     </div>
 </body>
 </html>
