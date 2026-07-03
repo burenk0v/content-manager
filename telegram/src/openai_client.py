@@ -31,7 +31,7 @@ class OpenAIClient:
             model=self.model,
             messages=[
                 {
-                    "role": "debug",
+                    "role": "developer",
                     "content": "Ты большой специалист в автоматизации тестирования",
                 },
                 {
