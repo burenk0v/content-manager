@@ -297,7 +297,14 @@ def delete_topic(
     if not topic:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
     db.delete(topic)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Topic cannot be deleted because it is referenced by existing drafts. Delete related drafts first."
+        )
 
 
 @router.get("/schedules", response_model=List[ScheduleOut])
@@ -473,3 +480,18 @@ def update_draft(
     db.commit()
     db.refresh(draft)
     return draft
+
+
+@router.delete("/drafts/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_draft(
+    draft_id: int,
+    x_service_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if not _check_service_token(x_service_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
+    draft = db.query(PostDraft).filter(PostDraft.id == draft_id).first()
+    if not draft:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
+    db.delete(draft)
+    db.commit()

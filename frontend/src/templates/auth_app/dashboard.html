@@ -65,6 +65,9 @@
             font-size: 18px;
             margin-bottom: 10px;
         }
+        .message { padding: 14px 16px; margin-bottom: 20px; border-radius: 6px; font-weight: 600; }
+        .message.error { background-color: #fdecea; color: #b72128; border: 1px solid #f5c2c7; }
+        .message.success { background-color: #e6ffed; color: #1f6e33; border: 1px solid #b7eb8f; }
     </style>
 </head>
 <body>
@@ -96,6 +99,12 @@
                 <h2>Schedules</h2>
                 <p>Total schedules: {{ schedule_count }}</p>
                 <a href="{% url 'auth_app:schedules' %}" class="nav-link">Manage schedules</a>
+            </div>
+
+            <div class="panel">
+                <h2>Drafts</h2>
+                <p>Total drafts: {{ draft_count }}</p>
+                <a href="{% url 'auth_app:drafts' %}" class="nav-link" style="background-color: #28a745;">Manage drafts</a>
             </div>
         </div>
 

@@ -68,6 +68,7 @@ def dashboard_view(request):
     db_status = health['db']
     topic_count = 0
     schedule_count = 0
+    draft_count = 0
 
     try:
         topics_response = backend_request('get', '/content/topics')
@@ -76,6 +77,9 @@ def dashboard_view(request):
         schedules_response = backend_request('get', '/content/schedules')
         if schedules_response.status_code == 200:
             schedule_count = len(schedules_response.json())
+        drafts_response = backend_request('get', '/content/drafts')
+        if drafts_response.status_code == 200:
+            draft_count = len(drafts_response.json())
     except Exception:
         messages.error(request, 'Unable to load backend counts.')
 
@@ -84,6 +88,7 @@ def dashboard_view(request):
         'db_status': db_status,
         'topic_count': topic_count,
         'schedule_count': schedule_count,
+        'draft_count': draft_count,
     })
 
 
@@ -214,6 +219,71 @@ def schedules_view(request):
         'language_options': LANGUAGE_OPTIONS,
         'schedules': schedules,
         'edit_schedule': edit_schedule,
+    })
+
+
+@login_required
+def drafts_view(request):
+    drafts = []
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        draft_id = request.POST.get('draft_id')
+        try:
+            if action == 'delete_draft':
+                result = backend_request('delete', f'/content/drafts/{draft_id}')
+                if result.status_code in (200, 204):
+                    messages.success(request, 'Draft deleted successfully.')
+                else:
+                    error_detail = 'Unable to delete draft'
+                    if result.text:
+                        try:
+                            error_detail = result.json().get('detail', error_detail)
+                        except ValueError:
+                            error_detail = result.text
+                    messages.error(request, error_detail)
+                return redirect('auth_app:drafts')
+
+            if action == 'publish_draft':
+                result = backend_request('patch', f'/content/drafts/{draft_id}', json={'status': 'published'})
+                if result.status_code == 200:
+                    messages.success(request, 'Draft approved and published.')
+                else:
+                    error_detail = 'Unable to publish draft'
+                    if result.text:
+                        try:
+                            error_detail = result.json().get('detail', error_detail)
+                        except ValueError:
+                            error_detail = result.text
+                    messages.error(request, error_detail)
+                return redirect('auth_app:drafts')
+
+            if action == 'reject_draft':
+                result = backend_request('patch', f'/content/drafts/{draft_id}', json={'status': 'rejected'})
+                if result.status_code == 200:
+                    messages.success(request, 'Draft rejected successfully.')
+                else:
+                    error_detail = 'Unable to reject draft'
+                    if result.text:
+                        try:
+                            error_detail = result.json().get('detail', error_detail)
+                        except ValueError:
+                            error_detail = result.text
+                    messages.error(request, error_detail)
+                return redirect('auth_app:drafts')
+        except requests.RequestException as exc:
+            messages.error(request, f'Backend request failed: {exc}')
+            return redirect('auth_app:drafts')
+
+    try:
+        drafts_response = backend_request('get', '/content/drafts')
+        if drafts_response.status_code == 200:
+            drafts = drafts_response.json()
+    except Exception:
+        messages.error(request, 'Unable to load drafts.')
+
+    return render(request, 'auth_app/drafts.html', {
+        'drafts': drafts,
     })
 
 
