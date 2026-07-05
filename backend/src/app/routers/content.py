@@ -90,15 +90,15 @@ class ScheduleCreate(ScheduleBase):
 
 
 class ScheduleUpdate(BaseModel):
-    name: Optional[str]
-    chat_id: Optional[str]
-    chat_name: Optional[str]
-    language: Optional[str]
-    assistant_message: Optional[str]
-    schedule_type: Optional[str]
-    schedule_value: Optional[str]
-    is_active: Optional[bool]
-    last_run: Optional[datetime]
+    name: Optional[str] = None
+    chat_id: Optional[str] = None
+    chat_name: Optional[str] = None
+    language: Optional[str] = None
+    assistant_message: Optional[str] = None
+    schedule_type: Optional[str] = None
+    schedule_value: Optional[str] = None
+    is_active: Optional[bool] = None
+    last_run: Optional[datetime] = None
 
     @validator("language")
     def validate_language(cls, value):
@@ -203,6 +203,8 @@ def compute_next_run(schedule: PublicationSchedule) -> Optional[datetime]:
         today = date.today()
         scheduled = datetime.combine(today, run_time)
         if schedule.last_run is None or schedule.last_run.date() < today:
+            if scheduled <= now:
+                return datetime.combine(today + timedelta(days=1), run_time)
             return scheduled
         return datetime.combine(today + timedelta(days=1), run_time)
 
