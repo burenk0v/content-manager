@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from datetime import datetime
@@ -227,12 +228,20 @@ def prepare_telegram_content(text: str) -> str:
     return "\n".join(result)
 
 
-async def send_admin_message(bot: Bot, text: str, admins: list[int], reply_markup: InlineKeyboardMarkup | None = None) -> None:
+async def send_admin_message(bot: Bot, text: str, admins: list[int], reply_markup: InlineKeyboardMarkup | None = None) -> bool:
+    if not admins:
+        logging.warning("No admin IDs configured for Telegram bot; draft delivery skipped.")
+        return False
+
+    sent_any = False
     for admin_id in admins:
         try:
             await bot.send_message(admin_id, text, parse_mode="HTML", reply_markup=reply_markup)
-        except Exception:
-            continue
+            sent_any = True
+        except Exception as exc:
+            logging.exception("Failed to send admin message to %s: %s", admin_id, exc)
+
+    return sent_any
 
 
 async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: dict[str, Any], admins: list[int]) -> None:
@@ -276,8 +285,6 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
             generated_text=generated_text,
         )
 
-        await update_schedule_last_run(schedule['id'], datetime.utcnow())
-
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="Publish", callback_data=f"publish:{draft['id']}"),
@@ -290,7 +297,11 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
             f"<b>Language:</b> {schedule['language']}\n\n"
             f"{generated_text}"
         )
-        await send_admin_message(bot, payload_text, admins, keyboard)
+        sent = await send_admin_message(bot, payload_text, admins, keyboard)
+        if sent:
+            await update_schedule_last_run(schedule['id'], datetime.utcnow())
+        else:
+            logging.warning("Draft created for schedule %s but admin message failed", schedule['name'])
         return
 
     await send_admin_message(bot, f"⚠️ Не удалось сгенерировать уникальный пост для расписания {schedule['name']}. Попробуйте проверить темы или настройки ассистента.", admins)
@@ -300,8 +311,10 @@ async def schedule_worker(bot: Bot, ai_client: OpenAIClient, admins: list[int]) 
     while True:
         try:
             schedules = await fetch_ready_schedules()
+            if not schedules:
+                logging.debug("No ready schedules found.")
             for schedule in schedules:
                 await generate_and_send_draft(bot, ai_client, schedule, admins)
         except Exception:
-            pass
+            logging.exception("Error while processing scheduled drafts")
         await asyncio.sleep(SCHEDULE_CHECK_INTERVAL_MINUTES * 60)
