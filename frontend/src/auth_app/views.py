@@ -100,7 +100,13 @@ def topics_view(request):
                 if result.status_code in (200, 204):
                     messages.success(request, 'Topic deleted successfully.')
                 else:
-                    messages.error(request, result.json().get('detail', 'Unable to delete topic'))
+                    error_detail = 'Unable to delete topic'
+                    if result.text:
+                        try:
+                            error_detail = result.json().get('detail', error_detail)
+                        except ValueError:
+                            error_detail = result.text
+                    messages.error(request, error_detail)
                 return redirect('auth_app:topics')
         except requests.RequestException as exc:
             messages.error(request, f'Backend request failed: {exc}')
@@ -180,7 +186,13 @@ def schedules_view(request):
                 if result.status_code in (200, 204):
                     messages.success(request, 'Schedule deleted successfully.')
                 else:
-                    messages.error(request, result.json().get('detail', 'Unable to delete schedule'))
+                    error_detail = 'Unable to delete schedule'
+                    if result.text:
+                        try:
+                            error_detail = result.json().get('detail', error_detail)
+                        except ValueError:
+                            error_detail = result.text
+                    messages.error(request, error_detail)
                 return redirect('auth_app:schedules')
         except requests.RequestException as exc:
             messages.error(request, f'Backend request failed: {exc}')
