@@ -28,12 +28,6 @@
 <body>
 <div class="container">
     <h1>Manage Topics</h1>
-    <div class="status {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
-        Backend status: {{ backend_status }}
-    </div>
-    <div class="status {% if db_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
-        Database status: {{ db_status }}
-    </div>
 
     {% if messages %}
         {% for message in messages %}
@@ -75,7 +69,7 @@
                 </tbody>
             </table>
         {% else %}
-            <div class="warning">No topics found. Create one to use it in the scheduler.</div>
+            <div class="warning">No topics found yet.</div>
         {% endif %}
     </div>
 

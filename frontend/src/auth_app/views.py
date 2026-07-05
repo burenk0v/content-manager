@@ -89,9 +89,6 @@ def dashboard_view(request):
 
 @login_required
 def topics_view(request):
-    health = get_backend_health()
-    backend_status = health['backend']
-    db_status = health['db']
     topics = []
 
     if request.method == 'POST':
@@ -117,17 +114,12 @@ def topics_view(request):
         messages.error(request, 'Unable to load topics.')
 
     return render(request, 'auth_app/topics.html', {
-        'backend_status': backend_status,
-        'db_status': db_status,
         'topics': topics,
     })
 
 
 @login_required
 def schedules_view(request):
-    health = get_backend_health()
-    backend_status = health['backend']
-    db_status = health['db']
     schedules = []
     edit_schedule = None
 
@@ -195,8 +187,7 @@ def schedules_view(request):
         edit_schedule = next((item for item in schedules if str(item.get('id')) == edit_schedule_id), None)
 
     return render(request, 'auth_app/schedules.html', {
-        'backend_status': backend_status,
-        'db_status': db_status,
+
         'language_options': LANGUAGE_OPTIONS,
         'schedules': schedules,
         'edit_schedule': edit_schedule,
