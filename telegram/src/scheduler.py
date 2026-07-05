@@ -63,7 +63,12 @@ async def update_draft_status(draft_id: int, status: str) -> dict[str, Any]:
 
 
 async def update_schedule_last_run(schedule_id: int, last_run: datetime) -> None:
-    await backend_request("PUT", f"/content/schedules/{schedule_id}", json={"last_run": last_run.isoformat()})
+    response = await backend_request("PUT", f"/content/schedules/{schedule_id}", json={"last_run": last_run.isoformat()})
+    try:
+        response.raise_for_status()
+    except Exception as exc:
+        logging.exception("Failed to update last_run for schedule %s: %s", schedule_id, exc)
+        raise
 
 
 async def create_topic(topic_name: str, language: str) -> dict[str, Any] | None:

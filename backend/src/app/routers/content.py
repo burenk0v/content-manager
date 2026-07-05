@@ -163,8 +163,8 @@ class DraftCreate(DraftBase):
 
 
 class DraftUpdate(BaseModel):
-    status: Optional[str]
-    generated_text: Optional[str]
+    status: Optional[str] = None
+    generated_text: Optional[str] = None
 
     @validator("status")
     def validate_status(cls, value):
@@ -200,7 +200,7 @@ def compute_next_run(schedule: PublicationSchedule) -> Optional[datetime]:
             run_time = datetime.strptime(schedule.schedule_value, "%H:%M").time()
         except ValueError:
             return None
-        today = date.today()
+        today = now.date()
         scheduled = datetime.combine(today, run_time)
         if schedule.last_run is None or schedule.last_run.date() < today:
             if scheduled <= now:
