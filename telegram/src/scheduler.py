@@ -120,7 +120,7 @@ def parse_generation_output(text: str) -> tuple[str, str] | None:
         r"TOPIC:\s*(.+?)\s*MESSAGE:\s*(.+)",
     ]
     for pattern in patterns:
-        match = re.search(pattern, re.S | re.I)
+        match = re.search(pattern, text, re.S | re.I)
         if match:
             topic = normalize_topic_name(match.group(1))
             message = match.group(2).strip()
