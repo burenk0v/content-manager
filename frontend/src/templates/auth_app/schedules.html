@@ -24,6 +24,45 @@
         .small-button { padding: 8px 12px; font-size: 13px; margin-right: 8px; color: white; border: none; border-radius: 4px; cursor: pointer; }
         .small-button.edit { background-color: #17a2b8; }
         .small-button.delete { background-color: #dc3545; }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 26px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #4caf50;
+        }
+        input:checked + .slider:before {
+            transform: translateX(24px);
+        }
         .warning { background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 12px; border-radius: 6px; margin-bottom: 20px; }
     </style>
 </head>
@@ -95,6 +134,7 @@
                         <th>Channel</th>
                         <th>Language</th>
                         <th>Next run</th>
+                        <th>Active</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -106,6 +146,17 @@
                             <td>{{ schedule.chat_name|default:schedule.chat_id }}</td>
                             <td>{{ schedule.language }}</td>
                             <td>{{ schedule.next_run|default:'n/a' }}</td>
+                            <td>
+                                <form method="post" style="display:inline-block; vertical-align: middle;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="toggle_schedule_active">
+                                    <input type="hidden" name="schedule_id" value="{{ schedule.id }}">
+                                    <label class="switch">
+                                        <input type="checkbox" name="is_active" {% if schedule.is_active %}checked{% endif %} onchange="this.form.submit()">
+                                        <span class="slider"></span>
+                                    </label>
+                                </form>
+                            </td>
                             <td>
                                 <a href="?edit_schedule={{ schedule.id }}" class="small-button edit">Edit</a>
                                 <form method="post" style="display:inline-block;">

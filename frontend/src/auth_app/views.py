@@ -163,6 +163,17 @@ def schedules_view(request):
                     messages.error(request, result.json().get('detail', 'Unable to update schedule'))
                 return redirect('auth_app:schedules')
 
+            if action == 'toggle_schedule_active':
+                schedule_id = request.POST.get('schedule_id')
+                is_active = request.POST.get('is_active') == 'on'
+                payload = {'is_active': is_active}
+                result = backend_request('put', f'/content/schedules/{schedule_id}', json=payload)
+                if result.status_code == 200:
+                    messages.success(request, f"Schedule {'enabled' if is_active else 'disabled'}.")
+                else:
+                    messages.error(request, result.json().get('detail', 'Unable to update schedule status'))
+                return redirect('auth_app:schedules')
+
             if action == 'delete_schedule':
                 schedule_id = request.POST.get('schedule_id')
                 result = backend_request('delete', f'/content/schedules/{schedule_id}')
