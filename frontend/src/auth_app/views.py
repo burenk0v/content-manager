@@ -7,6 +7,11 @@ import os
 
 BACKEND_API_URL = os.environ.get('BACKEND_API_URL', 'http://localhost:8000')
 SERVICE_TOKEN = os.environ.get('SERVICE_ACCOUNT_TOKEN')
+LANGUAGE_OPTIONS = [
+    ('ru', 'Russian'),
+    ('en', 'English'),
+    ('es', 'Spanish'),
+]
 
 
 def backend_request(method: str, path: str, json=None, timeout=10):
@@ -15,6 +20,29 @@ def backend_request(method: str, path: str, json=None, timeout=10):
     if SERVICE_TOKEN:
         headers['X-Service-Token'] = SERVICE_TOKEN
     return requests.request(method, url, json=json, headers=headers, timeout=timeout)
+
+
+def get_backend_health():
+    status = { 'backend': 'Unknown', 'db': 'Unknown' }
+    try:
+        response = requests.get(f"{BACKEND_API_URL.rstrip('/')}/", timeout=5)
+        if response.status_code == 200 and response.json().get('status') == 'Backend running':
+            status['backend'] = 'Running'
+        else:
+            status['backend'] = 'Not working'
+    except Exception:
+        status['backend'] = 'Not working'
+
+    try:
+        response = requests.get(f"{BACKEND_API_URL.rstrip('/')}/health/db", timeout=5)
+        if response.status_code == 200 and response.json().get('status') == 'ok':
+            status['db'] = 'Running'
+        else:
+            status['db'] = 'Not working'
+    except Exception:
+        status['db'] = 'Not working'
+
+    return status
 
 
 def login_view(request):
@@ -35,18 +63,11 @@ def login_view(request):
 @login_required
 def dashboard_view(request):
     """Protected dashboard page with counts only."""
-    backend_status = "Unknown"
+    health = get_backend_health()
+    backend_status = health['backend']
+    db_status = health['db']
     topic_count = 0
     schedule_count = 0
-
-    try:
-        response = requests.get(f"{BACKEND_API_URL.rstrip('/')}/", timeout=5)
-        if response.status_code == 200 and response.json().get('status') == 'Backend running':
-            backend_status = 'Running'
-        else:
-            backend_status = 'Not working'
-    except Exception:
-        backend_status = 'Not working'
 
     try:
         topics_response = backend_request('get', '/content/topics')
@@ -60,6 +81,7 @@ def dashboard_view(request):
 
     return render(request, 'auth_app/dashboard.html', {
         'backend_status': backend_status,
+        'db_status': db_status,
         'topic_count': topic_count,
         'schedule_count': schedule_count,
     })
@@ -67,33 +89,14 @@ def dashboard_view(request):
 
 @login_required
 def topics_view(request):
-    backend_status = 'Unknown'
+    health = get_backend_health()
+    backend_status = health['backend']
+    db_status = health['db']
     topics = []
-
-    try:
-        response = requests.get(f"{BACKEND_API_URL.rstrip('/')}/", timeout=5)
-        if response.status_code == 200 and response.json().get('status') == 'Backend running':
-            backend_status = 'Running'
-        else:
-            backend_status = 'Not working'
-    except Exception:
-        backend_status = 'Not working'
 
     if request.method == 'POST':
         action = request.POST.get('action')
         try:
-            if action == 'create_topic':
-                payload = {
-                    'name': request.POST.get('topic_name', '').strip(),
-                    'language': request.POST.get('topic_language', '').strip(),
-                }
-                result = backend_request('post', '/content/topics', json=payload)
-                if result.status_code == 201:
-                    messages.success(request, 'Topic added successfully.')
-                else:
-                    messages.error(request, result.json().get('detail', 'Unable to add topic'))
-                return redirect('auth_app:topics')
-
             if action == 'delete_topic':
                 topic_id = request.POST.get('topic_id')
                 result = backend_request('delete', f'/content/topics/{topic_id}')
@@ -115,24 +118,18 @@ def topics_view(request):
 
     return render(request, 'auth_app/topics.html', {
         'backend_status': backend_status,
+        'db_status': db_status,
         'topics': topics,
     })
 
 
 @login_required
 def schedules_view(request):
-    backend_status = 'Unknown'
+    health = get_backend_health()
+    backend_status = health['backend']
+    db_status = health['db']
     schedules = []
     edit_schedule = None
-
-    try:
-        response = requests.get(f"{BACKEND_API_URL.rstrip('/')}/", timeout=5)
-        if response.status_code == 200 and response.json().get('status') == 'Backend running':
-            backend_status = 'Running'
-        else:
-            backend_status = 'Not working'
-    except Exception:
-        backend_status = 'Not working'
 
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -199,6 +196,8 @@ def schedules_view(request):
 
     return render(request, 'auth_app/schedules.html', {
         'backend_status': backend_status,
+        'db_status': db_status,
+        'language_options': LANGUAGE_OPTIONS,
         'schedules': schedules,
         'edit_schedule': edit_schedule,
     })

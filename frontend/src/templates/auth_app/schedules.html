@@ -33,6 +33,9 @@
     <div class="status {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
         Backend status: {{ backend_status }}
     </div>
+    <div class="status {% if db_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
+        Database status: {{ db_status }}
+    </div>
 
     {% if messages %}
         {% for message in messages %}
@@ -59,7 +62,12 @@
             <input id="chat_name" name="chat_name" type="text" value="{{ edit_schedule.chat_name|default:'' }}">
 
             <label for="schedule_language">Language</label>
-            <input id="schedule_language" name="schedule_language" type="text" value="{{ edit_schedule.language|default:'' }}" required>
+            <select id="schedule_language" name="schedule_language" required>
+                <option value="">Select language</option>
+                <option value="ru" {% if edit_schedule.language == 'ru' %}selected{% endif %}>Russian</option>
+                <option value="en" {% if edit_schedule.language == 'en' %}selected{% endif %}>English</option>
+                <option value="es" {% if edit_schedule.language == 'es' %}selected{% endif %}>Spanish</option>
+            </select>
 
             <label for="assistant_message">Assistant message</label>
             <textarea id="assistant_message" name="assistant_message" required>{{ edit_schedule.assistant_message|default:'' }}</textarea>

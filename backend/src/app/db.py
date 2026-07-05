@@ -18,3 +18,14 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def check_db_connection():
+    db = SessionLocal()
+    try:
+        db.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+    finally:
+        db.close()

@@ -21,3 +21,10 @@ app.include_router(content.router, prefix="/content", tags=["content"])
 @app.get("/")
 def root():
     return {"status": "Backend running"}
+
+
+@app.get("/health/db")
+def health_db():
+    if db.check_db_connection():
+        return {"status": "ok"}
+    return {"status": "failed"}

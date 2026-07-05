@@ -31,6 +31,9 @@
     <div class="status {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
         Backend status: {{ backend_status }}
     </div>
+    <div class="status {% if db_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
+        Database status: {{ db_status }}
+    </div>
 
     {% if messages %}
         {% for message in messages %}
@@ -38,23 +41,9 @@
         {% endfor %}
     {% endif %}
 
-    <div class="panel">
-        <h2>Create topic</h2>
-        <form method="post">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="create_topic">
-            <label for="topic_name">Topic name</label>
-            <input id="topic_name" name="topic_name" type="text" placeholder="Topic text" required>
-
-            <label for="topic_language">Language</label>
-            <input id="topic_language" name="topic_language" type="text" placeholder="en / ru" required>
-
-            <button type="submit">Add topic</button>
-        </form>
-    </div>
-
     <div class="panel" style="margin-top: 24px;">
         <h2>Existing topics</h2>
+        <div class="warning">Topics are generated automatically by AI. You can delete unused topics here.</div>
         {% if topics %}
             <table>
                 <thead>

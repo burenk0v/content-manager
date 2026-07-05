@@ -13,6 +13,7 @@ from src.app.models import PublicationSchedule, Topic, PostDraft
 router = APIRouter()
 
 VALID_SCHEDULE_TYPES = {"interval", "daily"}
+VALID_LANGUAGES = {"ru", "en", "es"}
 VALID_DRAFT_STATUSES = {"pending", "rejected", "published"}
 
 
@@ -26,6 +27,13 @@ def _check_service_token(x_service_token: Optional[str] = Header(None)):
 class TopicCreate(BaseModel):
     name: str = Field(..., min_length=1)
     language: str = Field(..., min_length=2)
+
+    @validator("language")
+    def validate_language(cls, value):
+        language = value.strip().lower()
+        if language not in VALID_LANGUAGES:
+            raise ValueError("language must be one of ru, en, es")
+        return language
 
 
 class TopicOut(TopicCreate):
@@ -45,6 +53,13 @@ class ScheduleBase(BaseModel):
     schedule_type: str
     schedule_value: str
     is_active: bool = True
+
+    @validator("language")
+    def validate_language(cls, value):
+        language = value.strip().lower()
+        if language not in VALID_LANGUAGES:
+            raise ValueError("language must be one of ru, en, es")
+        return language
 
     @validator("schedule_type")
     def validate_schedule_type(cls, value):
@@ -84,6 +99,15 @@ class ScheduleUpdate(BaseModel):
     schedule_value: Optional[str]
     is_active: Optional[bool]
     last_run: Optional[datetime]
+
+    @validator("language")
+    def validate_language(cls, value):
+        if value is None:
+            return value
+        language = value.strip().lower()
+        if language not in VALID_LANGUAGES:
+            raise ValueError("language must be one of ru, en, es")
+        return language
 
     @validator("schedule_type")
     def validate_schedule_type(cls, value):
