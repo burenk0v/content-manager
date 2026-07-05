@@ -5,30 +5,26 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 50px auto;
+            max-width: 1000px;
+            margin: 40px auto;
             padding: 20px;
             background-color: #f5f5f5;
         }
         .container {
             background-color: white;
             padding: 30px;
-            border-radius: 5px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.12);
         }
-        h1 {
+        h1, h2 {
             color: #333;
-        }
-        .welcome {
-            color: #007bff;
-            margin-bottom: 20px;
         }
         .status {
             padding: 15px;
             margin: 20px 0;
             border-radius: 5px;
-            text-align: center;
             font-weight: bold;
+            text-align: center;
         }
         .status-running {
             background-color: #d4edda;
@@ -40,31 +36,66 @@
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
-        .logout-link {
+        .nav-link, .logout-link {
             display: inline-block;
             margin-top: 20px;
             padding: 10px 20px;
-            background-color: #dc3545;
+            background-color: #007bff;
             color: white;
             text-decoration: none;
             border-radius: 4px;
         }
-        .logout-link:hover {
-            background-color: #c82333;
+        .logout-link {
+            background-color: #dc3545;
+        }
+        .nav-link:hover, .logout-link:hover {
+            opacity: 0.9;
+        }
+        .grid {
+            display: grid;
+            gap: 24px;
+        }
+        .panel {
+            background: #fafafa;
+            border: 1px solid #e2e2e2;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .panel p {
+            font-size: 18px;
+            margin-bottom: 10px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Welcome!</h1>
-        <p class="welcome">You are logged in as {{ user.username }}</p>
-        
-        <div class="status 
-            {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
+        <h1>Content Scheduler Dashboard</h1>
+        <p>Logged in as {{ user.username }}</p>
+
+        <div class="status {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
             Backend status: {{ backend_status }}
         </div>
-        
-        <p>This is a protected page. You can add any information here.</p>
+
+        {% if messages %}
+            {% for message in messages %}
+                <div class="message {{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+
+        <div class="grid">
+            <div class="panel">
+                <h2>Topics</h2>
+                <p>Total topics: {{ topic_count }}</p>
+                <a href="{% url 'auth_app:topics' %}" class="nav-link">Manage topics</a>
+            </div>
+
+            <div class="panel">
+                <h2>Schedules</h2>
+                <p>Total schedules: {{ schedule_count }}</p>
+                <a href="{% url 'auth_app:schedules' %}" class="nav-link">Manage schedules</a>
+            </div>
+        </div>
+
         <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>
     </div>
 </body>

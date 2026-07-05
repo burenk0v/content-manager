@@ -2,8 +2,7 @@ from fastapi import FastAPI
 
 from src.app.routers import auth
 from src.app.routers import content
-from src.app import db
-from src.app.models import User
+from src.app import db, models
 
 
 app = FastAPI()

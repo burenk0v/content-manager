@@ -1,17 +1,22 @@
 import asyncio
+import contextlib
 import os
 import re
 from html import escape
 from urllib.parse import urlparse
+from typing import Any
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from scheduler import fetch_draft, fetch_schedule, schedule_worker, update_draft_status
+from openai_client import OpenAIClient
 
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # Токен бота из переменных окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMINS = [int(x) for x in (os.getenv("ADMINS", "").split(",") if os.getenv("ADMINS") else []) if x.strip()]
+BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
+SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
 
 
 def get_webapp_url() -> str | None:
@@ -34,9 +39,6 @@ def get_webapp_url() -> str | None:
 
 
 WEBAPP_URL = get_webapp_url()
-
-
-from openai_client import OpenAIClient
 
 
 def looks_like_html(text: str) -> bool:
@@ -131,16 +133,16 @@ def prepare_telegram_content(text: str) -> str:
     return "\n".join(result)
 
 
+def is_admin(user_id: int) -> bool:
+    if not ADMINS:
+        return False
+    return user_id in ADMINS
+
+
 async def main():
-    # Инициализация бота и диспетчера
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     ai_client = OpenAIClient()
-
-    def is_admin(user_id: int) -> bool:
-        if not ADMINS:
-            return False
-        return user_id in ADMINS
 
     @dp.message(Command(commands=['start']))
     async def start_command(message: types.Message):
@@ -169,11 +171,10 @@ async def main():
     async def handle_messages(message: types.Message):
         uid = message.from_user.id
         if not is_admin(uid):
-            return  # ignore non-admins
+            return
 
         text = (message.text or "").strip()
         if text.startswith('/ask'):
-            # support: /ask <prompt>
             prompt = text[len('/ask'):].strip()
             if not prompt:
                 await message.answer("Please provide a request after the /ask command")
@@ -183,8 +184,68 @@ async def main():
             telegram_content = prepare_telegram_content(result)
             await message.answer(telegram_content, parse_mode="HTML")
 
-    # Запуск поллинга
-    await dp.start_polling(bot)
+    @dp.callback_query()
+    async def callback_handler(callback: types.CallbackQuery):
+        uid = callback.from_user.id
+        if not is_admin(uid):
+            await callback.answer("Access denied.", show_alert=True)
+            return
+
+        data = callback.data or ""
+        if data.startswith("publish:"):
+            draft_id = int(data.split(":", 1)[1])
+            draft = await fetch_draft(draft_id)
+            if not draft:
+                await callback.answer("Draft not found.", show_alert=True)
+                return
+            if draft.get("status") != "pending":
+                await callback.answer("Draft already processed.", show_alert=True)
+                return
+
+            schedule = await fetch_schedule(draft["schedule_id"])
+            if not schedule:
+                await callback.answer("Schedule not found.", show_alert=True)
+                return
+
+            try:
+                await bot.send_message(
+                    schedule["chat_id"],
+                    draft["generated_text"],
+                    parse_mode="HTML"
+                )
+                await update_draft_status(draft_id, "published")
+                await callback.answer("Post published.")
+            except Exception:
+                await callback.answer("Failed to publish post.", show_alert=True)
+
+        elif data.startswith("regenerate:"):
+            draft_id = int(data.split(":", 1)[1])
+            draft = await fetch_draft(draft_id)
+            if not draft:
+                await callback.answer("Draft not found.", show_alert=True)
+                return
+            if draft.get("status") != "pending":
+                await callback.answer("Draft already processed.", show_alert=True)
+                return
+
+            await update_draft_status(draft_id, "rejected")
+            schedule = await fetch_schedule(draft["schedule_id"])
+            if not schedule:
+                await callback.answer("Schedule not found.", show_alert=True)
+                return
+
+            await callback.answer("Regenerating post...")
+            await schedule_worker(bot, ai_client, ADMINS)
+        else:
+            await callback.answer()
+
+    worker_task = asyncio.create_task(schedule_worker(bot, ai_client, ADMINS))
+    try:
+        await dp.start_polling(bot)
+    finally:
+        worker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker_task
 
 
 if __name__ == "__main__":

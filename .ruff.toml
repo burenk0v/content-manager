@@ -1,0 +1,14 @@
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+select = ["E", "F", "I", "B", "C", "D", "Q"]
+ignore = ["E501"]
+exclude = [
+  ".git",
+  "__pycache__",
+  "build",
+  "dist",
+  "frontend/src/migrations",
+  "backend/src/__pycache__",
+  "telegram/src/__pycache__",
+]

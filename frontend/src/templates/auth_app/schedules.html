@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Manage Schedules</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1000px; margin: 40px auto; padding: 20px; background-color: #f5f5f5; }
+        .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
+        h1, h2 { color: #333; }
+        .status { padding: 15px; margin: 20px 0; border-radius: 5px; font-weight: bold; text-align: center; }
+        .status-running { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .status-not-running { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .nav-link, .logout-link { display: inline-block; margin-top: 20px; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+        .logout-link { background-color: #dc3545; }
+        .nav-link:hover, .logout-link:hover { opacity: 0.9; }
+        .panel { background: #fafafa; border: 1px solid #e2e2e2; border-radius: 8px; padding: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; }
+        input[type="text"], select, textarea { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d1d1; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        textarea { min-height: 120px; resize: vertical; }
+        button { background-color: #007bff; color: white; border: none; padding: 12px 18px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        button:hover { background-color: #0069d9; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px 10px; border-bottom: 1px solid #e8e8e8; text-align: left; }
+        th { background: #f8f8f8; }
+        .small-button { padding: 8px 12px; font-size: 13px; margin-right: 8px; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .small-button.edit { background-color: #17a2b8; }
+        .small-button.delete { background-color: #dc3545; }
+        .warning { background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 12px; border-radius: 6px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Manage Schedules</h1>
+    <div class="status {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
+        Backend status: {{ backend_status }}
+    </div>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="message {{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+
+    <div class="panel">
+        <h2>{% if edit_schedule %}Edit schedule{% else %}Create schedule{% endif %}</h2>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="{% if edit_schedule %}update_schedule{% else %}create_schedule{% endif %}">
+            {% if edit_schedule %}
+                <input type="hidden" name="schedule_id" value="{{ edit_schedule.id }}">
+            {% endif %}
+
+            <label for="schedule_name">Schedule name</label>
+            <input id="schedule_name" name="schedule_name" type="text" value="{{ edit_schedule.name|default:'' }}" required>
+
+            <label for="chat_id">Channel chat ID</label>
+            <input id="chat_id" name="chat_id" type="text" value="{{ edit_schedule.chat_id|default:'' }}" required>
+
+            <label for="chat_name">Channel name</label>
+            <input id="chat_name" name="chat_name" type="text" value="{{ edit_schedule.chat_name|default:'' }}">
+
+            <label for="schedule_language">Language</label>
+            <input id="schedule_language" name="schedule_language" type="text" value="{{ edit_schedule.language|default:'' }}" required>
+
+            <label for="assistant_message">Assistant message</label>
+            <textarea id="assistant_message" name="assistant_message" required>{{ edit_schedule.assistant_message|default:'' }}</textarea>
+
+            <label for="schedule_type">Schedule type</label>
+            <select id="schedule_type" name="schedule_type" required>
+                <option value="interval" {% if edit_schedule.schedule_type == 'interval' %}selected{% endif %}>Interval (minutes)</option>
+                <option value="daily" {% if edit_schedule.schedule_type == 'daily' %}selected{% endif %}>Daily at time</option>
+            </select>
+
+            <label for="schedule_value">Schedule value</label>
+            <input id="schedule_value" name="schedule_value" type="text" value="{{ edit_schedule.schedule_value|default:'' }}" placeholder="e.g. 60 or 09:30" required>
+
+            <label>
+                <input type="checkbox" name="is_active" {% if edit_schedule and edit_schedule.is_active %}checked{% endif %}>
+                Active
+            </label>
+
+            <button type="submit">{% if edit_schedule %}Save schedule{% else %}Create schedule{% endif %}</button>
+        </form>
+    </div>
+
+    <div class="panel" style="margin-top: 24px;">
+        <h2>Existing schedules</h2>
+        {% if schedules %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Channel</th>
+                        <th>Language</th>
+                        <th>Next run</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for schedule in schedules %}
+                        <tr>
+                            <td>{{ schedule.id }}</td>
+                            <td>{{ schedule.name }}</td>
+                            <td>{{ schedule.chat_name|default:schedule.chat_id }}</td>
+                            <td>{{ schedule.language }}</td>
+                            <td>{{ schedule.next_run|default:'n/a' }}</td>
+                            <td>
+                                <a href="?edit_schedule={{ schedule.id }}" class="small-button edit">Edit</a>
+                                <form method="post" style="display:inline-block;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="delete_schedule">
+                                    <input type="hidden" name="schedule_id" value="{{ schedule.id }}">
+                                    <button type="submit" class="small-button delete">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="warning">No schedules configured yet. Create one to enable scheduled generation.</div>
+        {% endif %}
+    </div>
+
+    <a href="{% url 'auth_app:dashboard' %}" class="nav-link">Back to dashboard</a>
+    <a href="{% url 'auth_app:topics' %}" class="nav-link" style="background-color: #17a2b8;">Manage topics</a>
+    <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>
+</div>
+</body>
+</html>

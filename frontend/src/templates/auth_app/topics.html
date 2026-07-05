@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Manage Topics</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1000px; margin: 40px auto; padding: 20px; background-color: #f5f5f5; }
+        .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
+        h1, h2 { color: #333; }
+        .status { padding: 15px; margin: 20px 0; border-radius: 5px; font-weight: bold; text-align: center; }
+        .status-running { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .status-not-running { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .nav-link, .logout-link { display: inline-block; margin-top: 20px; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+        .logout-link { background-color: #dc3545; }
+        .nav-link:hover, .logout-link:hover { opacity: 0.9; }
+        .panel { background: #fafafa; border: 1px solid #e2e2e2; border-radius: 8px; padding: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d1d1; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        button { background-color: #007bff; color: white; border: none; padding: 12px 18px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        button:hover { background-color: #0069d9; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px 10px; border-bottom: 1px solid #e8e8e8; text-align: left; }
+        th { background: #f8f8f8; }
+        .small-button { padding: 8px 12px; font-size: 13px; margin-right: 8px; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .small-button.delete { background-color: #dc3545; }
+        .warning { background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 12px; border-radius: 6px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Manage Topics</h1>
+    <div class="status {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
+        Backend status: {{ backend_status }}
+    </div>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="message {{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+
+    <div class="panel">
+        <h2>Create topic</h2>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_topic">
+            <label for="topic_name">Topic name</label>
+            <input id="topic_name" name="topic_name" type="text" placeholder="Topic text" required>
+
+            <label for="topic_language">Language</label>
+            <input id="topic_language" name="topic_language" type="text" placeholder="en / ru" required>
+
+            <button type="submit">Add topic</button>
+        </form>
+    </div>
+
+    <div class="panel" style="margin-top: 24px;">
+        <h2>Existing topics</h2>
+        {% if topics %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Language</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for topic in topics %}
+                        <tr>
+                            <td>{{ topic.id }}</td>
+                            <td>{{ topic.name }}</td>
+                            <td>{{ topic.language }}</td>
+                            <td>{{ topic.created_at }}</td>
+                            <td>
+                                <form method="post" style="display:inline-block;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="delete_topic">
+                                    <input type="hidden" name="topic_id" value="{{ topic.id }}">
+                                    <button type="submit" class="small-button delete">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="warning">No topics found. Create one to use it in the scheduler.</div>
+        {% endif %}
+    </div>
+
+    <a href="{% url 'auth_app:dashboard' %}" class="nav-link">Back to dashboard</a>
+    <a href="{% url 'auth_app:schedules' %}" class="nav-link" style="background-color: #17a2b8;">Manage schedules</a>
+    <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>
+</div>
+</body>
+</html>
