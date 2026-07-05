@@ -10,7 +10,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from scheduler import fetch_draft, fetch_schedule, schedule_worker, update_draft_status
+from scheduler import fetch_draft, fetch_schedule, generate_and_send_draft, schedule_worker, update_draft_status
 from openai_client import OpenAIClient
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -234,8 +234,13 @@ async def main():
                 await callback.answer("Schedule not found.", show_alert=True)
                 return
 
+            try:
+                await bot.delete_message(callback.message.chat.id, callback.message.message_id)
+            except Exception:
+                pass
+
             await callback.answer("Regenerating post...")
-            await schedule_worker(bot, ai_client, ADMINS)
+            await generate_and_send_draft(bot, ai_client, schedule, ADMINS)
         else:
             await callback.answer()
 
