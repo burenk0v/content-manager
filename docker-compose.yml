@@ -41,12 +41,14 @@ services:
     restart: always
     depends_on:
       - frontend
+      - backend
     environment:
       WEBAPP_URL: ${WEBAPP_URL:-https://example.com}
       BOT_TOKEN: ${BOT_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ADMINS: ${ADMINS}
       SERVICE_ACCOUNT_TOKEN: ${SERVICE_ACCOUNT_TOKEN}
+      BACKEND_API_URL: http://backend:8000
 
 volumes:
   postgres_data:
