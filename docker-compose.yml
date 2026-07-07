@@ -39,7 +39,7 @@ services:
     environment:
       BACKEND_API_URL: http://backend:8000
     ports:
-      - "8443:443"
+      - "3000:8443"
 
   telegram:
     build: ./telegram

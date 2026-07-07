@@ -33,8 +33,8 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Expose HTTPS port
-EXPOSE 443
+# Expose non-privileged HTTPS port
+EXPOSE 8443
 
 # Switch to non-root user
 USER appuser

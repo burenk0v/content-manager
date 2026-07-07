@@ -20,5 +20,5 @@ if [ ! -f /certs/localhost.crt ] || [ ! -f /certs/localhost.key ]; then
         -subj '/CN=localhost' >/dev/null 2>&1
 fi
 
-# Start Django development server with HTTPS
-python src/manage.py runserver_plus --cert-file /certs/localhost.crt --key-file /certs/localhost.key 0.0.0.0:443
+# Start Django development server with HTTPS on non-privileged port
+python src/manage.py runserver_plus --cert-file /certs/localhost.crt --key-file /certs/localhost.key 0.0.0.0:8443
