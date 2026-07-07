@@ -117,6 +117,14 @@
             <label for="schedule_value">Schedule value</label>
             <input id="schedule_value" name="schedule_value" type="text" value="{{ edit_schedule.schedule_value|default:'' }}" placeholder="e.g. 60 or 09:30" required>
 
+            <label for="schedule_timezone">Timezone for local time input</label>
+            <select id="schedule_timezone" name="schedule_timezone">
+                {% for tz_value, tz_label in timezones %}
+                    <option value="{{ tz_value }}" {% if schedule_timezone == tz_value %}selected{% endif %}>{{ tz_label }}</option>
+                {% endfor %}
+            </select>
+            <div class="warning" style="margin-top: -8px;">Daily schedules are entered in the selected timezone. The backend keeps UTC internally.</div>
+
             <label>
                 <input type="checkbox" name="is_active" {% if edit_schedule and edit_schedule.is_active %}checked{% endif %}>
                 Active

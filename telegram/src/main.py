@@ -139,6 +139,13 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMINS
 
 
+async def delete_callback_message(bot: Bot, callback: types.CallbackQuery) -> None:
+    try:
+        await bot.delete_message(callback.message.chat.id, callback.message.message_id)
+    except Exception:
+        pass
+
+
 async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
@@ -217,6 +224,8 @@ async def main():
                 await callback.answer("Post approved.")
             except Exception:
                 await callback.answer("Failed to approve post.", show_alert=True)
+            finally:
+                await delete_callback_message(bot, callback)
 
         elif data.startswith("reject:"):
             draft_id = int(data.split(":", 1)[1])
@@ -233,6 +242,8 @@ async def main():
                 await callback.answer("Draft rejected.")
             except Exception:
                 await callback.answer("Failed to reject draft.", show_alert=True)
+            finally:
+                await delete_callback_message(bot, callback)
 
         elif data.startswith("delete:"):
             draft_id = int(data.split(":", 1)[1])
@@ -246,6 +257,8 @@ async def main():
                 await callback.answer("Draft deleted.")
             except Exception:
                 await callback.answer("Failed to delete draft.", show_alert=True)
+            finally:
+                await delete_callback_message(bot, callback)
         else:
             await callback.answer()
 

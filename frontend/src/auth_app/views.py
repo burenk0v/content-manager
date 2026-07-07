@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
@@ -12,6 +15,15 @@ LANGUAGE_OPTIONS = [
     ('en', 'English'),
     ('es', 'Spanish'),
 ]
+TIMEZONE_OPTIONS = [
+    ('UTC', 'UTC'),
+    ('Europe/London', 'Europe/London'),
+    ('Europe/Berlin', 'Europe/Berlin'),
+    ('Europe/Moscow', 'Europe/Moscow'),
+    ('Asia/Tokyo', 'Asia/Tokyo'),
+    ('America/New_York', 'America/New_York'),
+    ('America/Los_Angeles', 'America/Los_Angeles'),
+]
 
 
 def backend_request(method: str, path: str, json=None, timeout=10):
@@ -20,6 +32,22 @@ def backend_request(method: str, path: str, json=None, timeout=10):
     if SERVICE_TOKEN:
         headers['X-Service-Token'] = SERVICE_TOKEN
     return requests.request(method, url, json=json, headers=headers, timeout=timeout)
+
+
+def convert_local_time_to_utc(value: str, timezone_name: str) -> str:
+    try:
+        local_dt = datetime.strptime(value, '%H:%M').replace(tzinfo=ZoneInfo(timezone_name))
+        return local_dt.astimezone(ZoneInfo('UTC')).strftime('%H:%M')
+    except Exception:
+        return value
+
+
+def convert_utc_time_to_local(value: str, timezone_name: str) -> str:
+    try:
+        utc_dt = datetime.strptime(value, '%H:%M').replace(tzinfo=ZoneInfo('UTC'))
+        return utc_dt.astimezone(ZoneInfo(timezone_name)).strftime('%H:%M')
+    except Exception:
+        return value
 
 
 def get_backend_health():
@@ -133,19 +161,30 @@ def topics_view(request):
 def schedules_view(request):
     schedules = []
     edit_schedule = None
+    timezone_name = request.session.get('schedule_timezone', 'UTC')
+    timezone_from_request = request.POST.get('schedule_timezone') or request.GET.get('schedule_timezone')
+    if timezone_from_request:
+        timezone_name = timezone_from_request
+        request.session['schedule_timezone'] = timezone_name
 
     if request.method == 'POST':
         action = request.POST.get('action')
+        timezone_name = request.POST.get('schedule_timezone') or timezone_name
+        request.session['schedule_timezone'] = timezone_name
         try:
             if action == 'create_schedule':
+                schedule_type = request.POST.get('schedule_type', '').strip()
+                schedule_value = request.POST.get('schedule_value', '').strip()
+                if schedule_type == 'daily':
+                    schedule_value = convert_local_time_to_utc(schedule_value, timezone_name)
                 payload = {
                     'name': request.POST.get('schedule_name', '').strip(),
                     'chat_id': request.POST.get('chat_id', '').strip(),
                     'chat_name': request.POST.get('chat_name', '').strip(),
                     'language': request.POST.get('schedule_language', '').strip(),
                     'assistant_message': request.POST.get('assistant_message', '').strip(),
-                    'schedule_type': request.POST.get('schedule_type', '').strip(),
-                    'schedule_value': request.POST.get('schedule_value', '').strip(),
+                    'schedule_type': schedule_type,
+                    'schedule_value': schedule_value,
                     'is_active': request.POST.get('is_active') == 'on',
                 }
                 result = backend_request('post', '/content/schedules', json=payload)
@@ -157,14 +196,18 @@ def schedules_view(request):
 
             if action == 'update_schedule':
                 schedule_id = request.POST.get('schedule_id')
+                schedule_type = request.POST.get('schedule_type', '').strip()
+                schedule_value = request.POST.get('schedule_value', '').strip()
+                if schedule_type == 'daily':
+                    schedule_value = convert_local_time_to_utc(schedule_value, timezone_name)
                 payload = {
                     'name': request.POST.get('schedule_name', '').strip(),
                     'chat_id': request.POST.get('chat_id', '').strip(),
                     'chat_name': request.POST.get('chat_name', '').strip(),
                     'language': request.POST.get('schedule_language', '').strip(),
                     'assistant_message': request.POST.get('assistant_message', '').strip(),
-                    'schedule_type': request.POST.get('schedule_type', '').strip(),
-                    'schedule_value': request.POST.get('schedule_value', '').strip(),
+                    'schedule_type': schedule_type,
+                    'schedule_value': schedule_value,
                     'is_active': request.POST.get('is_active') == 'on',
                 }
                 result = backend_request('put', f'/content/schedules/{schedule_id}', json=payload)
@@ -213,10 +256,14 @@ def schedules_view(request):
     edit_schedule_id = request.GET.get('edit_schedule')
     if edit_schedule_id:
         edit_schedule = next((item for item in schedules if str(item.get('id')) == edit_schedule_id), None)
+        if edit_schedule and edit_schedule.get('schedule_type') == 'daily':
+            edit_schedule = dict(edit_schedule)
+            edit_schedule['schedule_value'] = convert_utc_time_to_local(edit_schedule.get('schedule_value', ''), timezone_name)
 
     return render(request, 'auth_app/schedules.html', {
-
         'language_options': LANGUAGE_OPTIONS,
+        'timezones': TIMEZONE_OPTIONS,
+        'schedule_timezone': timezone_name,
         'schedules': schedules,
         'edit_schedule': edit_schedule,
     })
