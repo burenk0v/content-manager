@@ -63,6 +63,11 @@ async def update_draft_status(draft_id: int, status: str) -> dict[str, Any]:
     return response.json()
 
 
+async def delete_draft(draft_id: int) -> None:
+    response = await backend_request("DELETE", f"/content/drafts/{draft_id}")
+    response.raise_for_status()
+
+
 async def update_schedule_last_run(schedule_id: int, last_run: datetime) -> None:
     response = await backend_request("PUT", f"/content/schedules/{schedule_id}", json={"last_run": last_run.isoformat()})
     try:
@@ -293,8 +298,12 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="Publish", callback_data=f"publish:{draft['id']}"),
-                InlineKeyboardButton(text="Regenerate", callback_data=f"regenerate:{draft['id']}")],
+                InlineKeyboardButton(text="Approve", callback_data=f"approve:{draft['id']}"),
+                InlineKeyboardButton(text="Reject", callback_data=f"reject:{draft['id']}"),
+            ],
+            [
+                InlineKeyboardButton(text="Delete", callback_data=f"delete:{draft['id']}"),
+            ],
         ])
 
         payload_text = (

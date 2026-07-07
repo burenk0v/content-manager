@@ -10,7 +10,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from scheduler import fetch_draft, fetch_schedule, generate_and_send_draft, schedule_worker, update_draft_status
+from scheduler import delete_draft, fetch_draft, fetch_schedule, generate_and_send_draft, schedule_worker, update_draft_status
 from openai_client import OpenAIClient
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -192,7 +192,7 @@ async def main():
             return
 
         data = callback.data or ""
-        if data.startswith("publish:"):
+        if data.startswith("approve:"):
             draft_id = int(data.split(":", 1)[1])
             draft = await fetch_draft(draft_id)
             if not draft:
@@ -214,11 +214,11 @@ async def main():
                     parse_mode="HTML"
                 )
                 await update_draft_status(draft_id, "published")
-                await callback.answer("Post published.")
+                await callback.answer("Post approved.")
             except Exception:
-                await callback.answer("Failed to publish post.", show_alert=True)
+                await callback.answer("Failed to approve post.", show_alert=True)
 
-        elif data.startswith("regenerate:"):
+        elif data.startswith("reject:"):
             draft_id = int(data.split(":", 1)[1])
             draft = await fetch_draft(draft_id)
             if not draft:
@@ -228,19 +228,24 @@ async def main():
                 await callback.answer("Draft already processed.", show_alert=True)
                 return
 
-            await update_draft_status(draft_id, "rejected")
-            schedule = await fetch_schedule(draft["schedule_id"])
-            if not schedule:
-                await callback.answer("Schedule not found.", show_alert=True)
+            try:
+                await update_draft_status(draft_id, "rejected")
+                await callback.answer("Draft rejected.")
+            except Exception:
+                await callback.answer("Failed to reject draft.", show_alert=True)
+
+        elif data.startswith("delete:"):
+            draft_id = int(data.split(":", 1)[1])
+            draft = await fetch_draft(draft_id)
+            if not draft:
+                await callback.answer("Draft not found.", show_alert=True)
                 return
 
             try:
-                await bot.delete_message(callback.message.chat.id, callback.message.message_id)
+                await delete_draft(draft_id)
+                await callback.answer("Draft deleted.")
             except Exception:
-                pass
-
-            await callback.answer("Regenerating post...")
-            await generate_and_send_draft(bot, ai_client, schedule, ADMINS)
+                await callback.answer("Failed to delete draft.", show_alert=True)
         else:
             await callback.answer()
 
