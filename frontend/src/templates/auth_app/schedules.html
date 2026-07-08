@@ -117,7 +117,7 @@
                             <td>
                                 {% if schedule.prompt_name %}<div style="margin-bottom: 8px; font-size: 12px; color: var(--text-soft);">Prompt: {{ schedule.prompt_name }}</div>{% endif %}
                                 {% if schedule.assistant_template_name %}<div style="margin-bottom: 8px; font-size: 12px; color: var(--text-soft);">Assistant: {{ schedule.assistant_template_name }}</div>{% endif %}
-                                <a href="?edit_schedule={{ schedule.id }}" class="small-button edit">Edit</a>
+                                <a href="?edit_schedule={{ schedule.id }}&schedule_timezone={{ schedule_timezone }}" class="small-button edit">Edit</a>
                                 <form method="post" style="display:inline-block;">
                                     {% csrf_token %}
                                     <input type="hidden" name="action" value="delete_schedule">
