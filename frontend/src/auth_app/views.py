@@ -52,6 +52,16 @@ def convert_utc_time_to_local(value: str, timezone_name: str) -> str:
         return value
 
 
+def convert_utc_datetime_to_local(value: str, timezone_name: str) -> str:
+    try:
+        utc_dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if utc_dt.tzinfo is None:
+            utc_dt = utc_dt.replace(tzinfo=ZoneInfo('UTC'))
+        return utc_dt.astimezone(ZoneInfo(timezone_name)).strftime('%Y-%m-%d %H:%M')
+    except Exception:
+        return value
+
+
 def get_backend_health():
     status = { 'backend': 'Unknown', 'db': 'Unknown' }
     try:
@@ -383,6 +393,10 @@ def schedules_view(request):
         schedules_response = backend_request('get', '/content/schedules')
         if schedules_response.status_code == 200:
             schedules = schedules_response.json()
+            for schedule in schedules:
+                next_run = schedule.get('next_run')
+                if next_run:
+                    schedule['next_run'] = convert_utc_datetime_to_local(next_run, timezone_name)
     except Exception:
         messages.error(request, 'Unable to load schedules.')
 
