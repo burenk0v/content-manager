@@ -275,7 +275,7 @@ def compute_next_run(schedule: PublicationSchedule) -> Optional[datetime]:
         except ValueError:
             return None
         if schedule.last_run is None:
-            return now
+            return now + timedelta(minutes=interval)
         return schedule.last_run + timedelta(minutes=interval)
 
     if schedule.schedule_type == "daily":
