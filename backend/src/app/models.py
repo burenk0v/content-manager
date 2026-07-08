@@ -51,6 +51,7 @@ class PublicationSchedule(Base):
     assistant_message = Column(Text, nullable=False)
     prompt_id = Column(Integer, ForeignKey('prompts.id'), nullable=True)
     assistant_template_id = Column(Integer, ForeignKey('assistant_message_templates.id'), nullable=True)
+    timezone = Column(String, nullable=False, default='UTC')
     schedule_type = Column(String, nullable=False)
     schedule_value = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)

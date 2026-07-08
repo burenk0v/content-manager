@@ -28,6 +28,9 @@ def ensure_schema():
         if "assistant_template_id" not in column_names:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE publication_schedules ADD COLUMN assistant_template_id INTEGER"))
+        if "timezone" not in column_names:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE publication_schedules ADD COLUMN timezone VARCHAR NOT NULL DEFAULT 'UTC'"))
 
     if engine.dialect.name == "postgresql" and "post_drafts" in inspector.get_table_names():
         draft_columns = {column["name"]: column for column in inspector.get_columns("post_drafts")}

@@ -260,6 +260,17 @@ def build_generation_prompt(schedule: dict[str, Any], used_names: set[str]) -> s
 
 
 async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: dict[str, Any], admins: list[int]) -> None:
+    # Re-read schedule state to avoid processing a schedule that was disabled
+    # right after the ready list was fetched.
+    current_schedule = await fetch_schedule(schedule["id"])
+    if not current_schedule:
+        logging.info("Schedule %s was removed before processing", schedule.get("id"))
+        return
+    if not current_schedule.get("is_active", False):
+        logging.info("Skipping inactive schedule %s", current_schedule.get("id"))
+        return
+
+    schedule = current_schedule
     existing_topics = await fetch_topics()
     used_names = {topic.get("name", "").strip().lower() for topic in existing_topics}
     system_message = schedule.get("assistant_template_text") or schedule.get("assistant_message") or (
@@ -278,6 +289,14 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
         if not topic_name or topic_name.lower() in used_names:
             continue
 
+        # Check once more before writing/sending because generation can take time,
+        # and the schedule may be disabled in the meantime.
+        refreshed_schedule = await fetch_schedule(schedule["id"])
+        if not refreshed_schedule or not refreshed_schedule.get("is_active", False):
+            logging.info("Schedule %s became inactive during generation", schedule.get("id"))
+            return
+
+        schedule = refreshed_schedule
         generated_text = prepare_telegram_content(generated_text)
 
         draft = await create_draft(

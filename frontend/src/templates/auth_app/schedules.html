@@ -69,7 +69,7 @@
                     <option value="{{ tz_value }}" {% if schedule_timezone == tz_value %}selected{% endif %}>{{ tz_label }}</option>
                 {% endfor %}
             </select>
-            <div class="warning" style="margin-top: -8px;">Daily schedules are entered in the selected timezone. The backend keeps UTC internally.</div>
+            <div class="warning" style="margin-top: -8px;">Daily schedules are entered in the selected timezone. UTC is used internally for execution, and timezone is saved with the schedule.</div>
 
             <label>
                 <input type="checkbox" name="is_active" {% if edit_schedule and edit_schedule.is_active %}checked{% endif %}>
@@ -90,6 +90,7 @@
                         <th>Name</th>
                         <th>Channel</th>
                         <th>Language</th>
+                        <th>Timezone</th>
                         <th>Next run</th>
                         <th>Active</th>
                         <th>Actions</th>
@@ -102,6 +103,7 @@
                             <td>{{ schedule.name }}</td>
                             <td>{{ schedule.chat_name|default:schedule.chat_id }}</td>
                             <td>{{ schedule.language }}</td>
+                            <td>{{ schedule.timezone|default:'UTC' }}</td>
                             <td>{{ schedule.next_run|default:'n/a' }}</td>
                             <td>
                                 <form method="post" style="display:inline-block; vertical-align: middle;">
@@ -117,7 +119,7 @@
                             <td>
                                 {% if schedule.prompt_name %}<div style="margin-bottom: 8px; font-size: 12px; color: var(--text-soft);">Prompt: {{ schedule.prompt_name }}</div>{% endif %}
                                 {% if schedule.assistant_template_name %}<div style="margin-bottom: 8px; font-size: 12px; color: var(--text-soft);">Assistant: {{ schedule.assistant_template_name }}</div>{% endif %}
-                                <a href="?edit_schedule={{ schedule.id }}&schedule_timezone={{ schedule_timezone }}" class="small-button edit">Edit</a>
+                                <a href="?edit_schedule={{ schedule.id }}" class="small-button edit">Edit</a>
                                 <form method="post" style="display:inline-block;">
                                     {% csrf_token %}
                                     <input type="hidden" name="action" value="delete_schedule">

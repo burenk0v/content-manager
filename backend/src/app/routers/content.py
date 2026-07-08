@@ -1,6 +1,7 @@
 import os
 from datetime import datetime, date, timedelta, time
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, validator
@@ -94,6 +95,7 @@ class ScheduleBase(BaseModel):
     assistant_message: Optional[str] = None
     prompt_id: Optional[int] = None
     assistant_template_id: Optional[int] = None
+    timezone: str = "UTC"
     schedule_type: str
     schedule_value: str
     is_active: bool = True
@@ -128,6 +130,17 @@ class ScheduleBase(BaseModel):
             raise ValueError("assistant_template_id must be a positive integer")
         return value
 
+    @validator("timezone")
+    def validate_timezone(cls, value):
+        timezone_name = value.strip()
+        if not timezone_name:
+            raise ValueError("timezone is required")
+        try:
+            ZoneInfo(timezone_name)
+        except Exception:
+            raise ValueError("timezone must be a valid IANA timezone")
+        return timezone_name
+
     @validator("schedule_value")
     def validate_schedule_value(cls, value, values):
         schedule_type = values.get("schedule_type")
@@ -157,6 +170,7 @@ class ScheduleUpdate(BaseModel):
     assistant_message: Optional[str] = None
     prompt_id: Optional[int] = None
     assistant_template_id: Optional[int] = None
+    timezone: Optional[str] = None
     schedule_type: Optional[str] = None
     schedule_value: Optional[str] = None
     is_active: Optional[bool] = None
@@ -195,6 +209,19 @@ class ScheduleUpdate(BaseModel):
         if value <= 0:
             raise ValueError("assistant_template_id must be a positive integer")
         return value
+
+    @validator("timezone")
+    def validate_timezone(cls, value):
+        if value is None:
+            return value
+        timezone_name = value.strip()
+        if not timezone_name:
+            raise ValueError("timezone is required")
+        try:
+            ZoneInfo(timezone_name)
+        except Exception:
+            raise ValueError("timezone must be a valid IANA timezone")
+        return timezone_name
 
     @validator("schedule_value")
     def validate_schedule_value(cls, value):
@@ -334,6 +361,7 @@ def schedule_out(schedule: PublicationSchedule) -> ScheduleOut:
         assistant_message=schedule.assistant_message,
         prompt_id=schedule.prompt_id,
         assistant_template_id=schedule.assistant_template_id,
+        timezone=schedule.timezone or "UTC",
         schedule_type=schedule.schedule_type,
         schedule_value=schedule.schedule_value,
         is_active=schedule.is_active,
@@ -625,6 +653,7 @@ def create_schedule(
         assistant_message=payload.assistant_message or "",
         prompt_id=payload.prompt_id,
         assistant_template_id=payload.assistant_template_id,
+        timezone=payload.timezone,
         schedule_type=payload.schedule_type,
         schedule_value=payload.schedule_value,
         is_active=payload.is_active,
@@ -679,6 +708,7 @@ def update_schedule(
             "assistant_message",
             "prompt_id",
             "assistant_template_id",
+            "timezone",
             "schedule_type",
             "schedule_value",
         )

@@ -334,16 +334,16 @@ def assistant_messages_view(request):
 def schedules_view(request):
     schedules = []
     edit_schedule = None
-    timezone_name = request.session.get('schedule_timezone', 'UTC')
-    timezone_from_request = request.POST.get('schedule_timezone') or request.GET.get('schedule_timezone')
-    if timezone_from_request:
-        timezone_name = timezone_from_request
-        request.session['schedule_timezone'] = timezone_name
+    valid_timezones = {value for value, _ in TIMEZONE_OPTIONS}
+    schedule_timezone = request.GET.get('schedule_timezone', 'UTC')
+    if schedule_timezone not in valid_timezones:
+        schedule_timezone = 'UTC'
 
     if request.method == 'POST':
         action = request.POST.get('action')
-        timezone_name = request.POST.get('schedule_timezone') or timezone_name
-        request.session['schedule_timezone'] = timezone_name
+        schedule_timezone = request.POST.get('schedule_timezone', 'UTC')
+        if schedule_timezone not in valid_timezones:
+            schedule_timezone = 'UTC'
         try:
             if action == 'create_schedule':
                 schedule_type = request.POST.get('schedule_type', '').strip()
@@ -353,7 +353,7 @@ def schedules_view(request):
                 assistant_template_id_raw = request.POST.get('assistant_template_id')
                 assistant_template_id = int(assistant_template_id_raw) if assistant_template_id_raw and assistant_template_id_raw.strip().isdigit() else None
                 if schedule_type == 'daily':
-                    schedule_value = convert_local_time_to_utc(schedule_value, timezone_name)
+                    schedule_value = convert_local_time_to_utc(schedule_value, schedule_timezone)
                 payload = {
                     'name': request.POST.get('schedule_name', '').strip(),
                     'chat_id': request.POST.get('chat_id', '').strip(),
@@ -362,6 +362,7 @@ def schedules_view(request):
                     'assistant_message': request.POST.get('assistant_message', ''),
                     'prompt_id': prompt_id,
                     'assistant_template_id': assistant_template_id,
+                    'timezone': schedule_timezone,
                     'schedule_type': schedule_type,
                     'schedule_value': schedule_value,
                     'is_active': request.POST.get('is_active') == 'on',
@@ -382,7 +383,7 @@ def schedules_view(request):
                 assistant_template_id_raw = request.POST.get('assistant_template_id')
                 assistant_template_id = int(assistant_template_id_raw) if assistant_template_id_raw and assistant_template_id_raw.strip().isdigit() else None
                 if schedule_type == 'daily':
-                    schedule_value = convert_local_time_to_utc(schedule_value, timezone_name)
+                    schedule_value = convert_local_time_to_utc(schedule_value, schedule_timezone)
                 payload = {
                     'name': request.POST.get('schedule_name', '').strip(),
                     'chat_id': request.POST.get('chat_id', '').strip(),
@@ -391,6 +392,7 @@ def schedules_view(request):
                     'assistant_message': request.POST.get('assistant_message', ''),
                     'prompt_id': prompt_id,
                     'assistant_template_id': assistant_template_id,
+                    'timezone': schedule_timezone,
                     'schedule_type': schedule_type,
                     'schedule_value': schedule_value,
                     'is_active': request.POST.get('is_active') == 'on',
@@ -436,7 +438,9 @@ def schedules_view(request):
         if schedules_response.status_code == 200:
             schedules = schedules_response.json()
             for schedule in schedules:
-                schedule['next_run'] = compute_schedule_next_run_display(schedule, timezone_name)
+                item_timezone = schedule.get('timezone') or 'UTC'
+                schedule['timezone'] = item_timezone
+                schedule['next_run'] = compute_schedule_next_run_display(schedule, item_timezone)
     except Exception:
         messages.error(request, 'Unable to load schedules.')
 
@@ -459,14 +463,19 @@ def schedules_view(request):
     edit_schedule_id = request.GET.get('edit_schedule')
     if edit_schedule_id:
         edit_schedule = next((item for item in schedules if str(item.get('id')) == edit_schedule_id), None)
+        if edit_schedule:
+            schedule_timezone = edit_schedule.get('timezone') or 'UTC'
         if edit_schedule and edit_schedule.get('schedule_type') == 'daily':
             edit_schedule = dict(edit_schedule)
-            edit_schedule['schedule_value'] = convert_utc_time_to_local(edit_schedule.get('schedule_value', ''), timezone_name)
+            edit_schedule['schedule_value'] = convert_utc_time_to_local(
+                edit_schedule.get('schedule_value', ''),
+                schedule_timezone,
+            )
 
     return render(request, 'auth_app/schedules.html', {
         'language_options': LANGUAGE_OPTIONS,
         'timezones': TIMEZONE_OPTIONS,
-        'schedule_timezone': timezone_name,
+        'schedule_timezone': schedule_timezone,
         'schedules': schedules,
         'prompts': prompts,
         'assistant_messages': assistant_messages,
