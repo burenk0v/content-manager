@@ -844,11 +844,25 @@ def update_draft(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
     update_data = payload.dict(exclude_unset=True)
     if update_data.get("status") == "published" and draft.topic_id is None:
-        topic = db.query(Topic).filter(Topic.name == draft.topic_name.strip()).first()
+        topic_name = (draft.topic_name or "").strip()
+        if not topic_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Draft topic_name is empty")
+
+        topic = db.query(Topic).filter(Topic.name == topic_name).first()
         if not topic:
-            topic = Topic(name=draft.topic_name.strip(), language=draft.language.strip())
+            topic = Topic(name=topic_name, language=draft.language.strip())
             db.add(topic)
-            db.flush()
+            try:
+                db.flush()
+            except IntegrityError:
+                # Another request may have created the same topic concurrently.
+                db.rollback()
+                draft = db.query(PostDraft).filter(PostDraft.id == draft_id).first()
+                if not draft:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
+                topic = db.query(Topic).filter(Topic.name == topic_name).first()
+                if not topic:
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Failed to resolve topic for published draft")
         update_data["topic_id"] = topic.id
     for key, value in update_data.items():
         setattr(draft, key, value)

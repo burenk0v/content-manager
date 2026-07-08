@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 import os
 import re
 from html import escape
@@ -215,11 +216,19 @@ async def main():
                 return
 
             try:
+                raw_text = draft.get("generated_text") or ""
+                formatted_text = prepare_telegram_content(raw_text)
+
                 await bot.send_message(
                     schedule["chat_id"],
-                    draft["generated_text"],
+                    formatted_text,
                     parse_mode="HTML"
                 )
+            except Exception as html_exc:
+                logging.warning("HTML send failed for draft %s, retrying without parse_mode: %s", draft_id, html_exc)
+                await bot.send_message(schedule["chat_id"], raw_text)
+
+            try:
                 await update_draft_status(draft_id, "published")
                 await callback.answer("Post approved.")
             except Exception:
