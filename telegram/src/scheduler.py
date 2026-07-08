@@ -14,7 +14,22 @@ from openai_client import OpenAIClient
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
-SCHEDULE_CHECK_INTERVAL_MINUTES = int(os.getenv("SCHEDULE_CHECK_INTERVAL_MINUTES", "1"))
+
+
+def get_schedule_check_interval_seconds() -> int:
+    raw_seconds = os.getenv("SCHEDULE_CHECK_INTERVAL_SECONDS")
+    if raw_seconds is not None:
+        return int(raw_seconds)
+
+    # Backward-compatible fallback for previous minute-based configuration.
+    raw_minutes = os.getenv("SCHEDULE_CHECK_INTERVAL_MINUTES")
+    if raw_minutes is not None:
+        return int(raw_minutes) * 60
+
+    return 10
+
+
+SCHEDULE_CHECK_INTERVAL_SECONDS = get_schedule_check_interval_seconds()
 
 
 def get_backend_url(path: str) -> str:
@@ -349,4 +364,4 @@ async def schedule_worker(bot: Bot, ai_client: OpenAIClient, admins: list[int]) 
                 await generate_and_send_draft(bot, ai_client, schedule, admins)
         except Exception:
             logging.exception("Error while processing scheduled drafts")
-        await asyncio.sleep(SCHEDULE_CHECK_INTERVAL_MINUTES * 60)
+        await asyncio.sleep(SCHEDULE_CHECK_INTERVAL_SECONDS)
