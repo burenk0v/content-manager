@@ -595,6 +595,13 @@ def update_schedule(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="assistant_message or assistant_template_id is required")
     if "assistant_message" in update_data and update_data["assistant_message"] is None:
         update_data["assistant_message"] = ""
+    schedule_definition_changed = any(
+        update_data.get(field) != getattr(schedule, field)
+        for field in ("schedule_type", "schedule_value")
+        if field in update_data
+    )
+    if schedule_definition_changed and "last_run" not in update_data:
+        update_data["last_run"] = None
     for key, value in update_data.items():
         setattr(schedule, key, value)
     db.commit()
