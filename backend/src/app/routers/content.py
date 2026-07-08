@@ -351,7 +351,14 @@ def get_topics(
 ):
     if not _check_service_token(x_service_token):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
-    topics = db.query(Topic).order_by(Topic.created_at.desc()).all()
+    topics = (
+        db.query(Topic)
+        .join(PostDraft, PostDraft.topic_id == Topic.id)
+        .filter(PostDraft.status == "published")
+        .distinct(Topic.id)
+        .order_by(Topic.created_at.desc())
+        .all()
+    )
     return topics
 
 
