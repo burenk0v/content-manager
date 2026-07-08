@@ -6,6 +6,7 @@ app_name = 'auth_app'
 urlpatterns = [
     path('', views.login_view, name='login'),
     path('dashboard/', views.dashboard_view, name='dashboard'),
+    path('theme/', views.set_theme_view, name='set_theme'),
     path('topics/', views.topics_view, name='topics'),
     path('prompts/', views.prompts_view, name='prompts'),
     path('assistant-messages/', views.assistant_messages_view, name='assistant_messages'),

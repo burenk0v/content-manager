@@ -1,34 +1,9 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Manage Assistant Messages</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 1000px; margin: 40px auto; padding: 20px; background-color: #f5f5f5; }
-        .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
-        h1, h2 { color: #333; }
-        .nav-link, .logout-link { display: inline-block; margin-top: 20px; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; }
-        .logout-link { background-color: #dc3545; }
-        .nav-link:hover, .logout-link:hover { opacity: 0.9; }
-        .panel { background: #fafafa; border: 1px solid #e2e2e2; border-radius: 8px; padding: 20px; }
-        label { display: block; margin-bottom: 8px; font-weight: bold; }
-        input[type="text"], select, textarea { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d1d1; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
-        textarea { min-height: 180px; resize: vertical; }
-        button { background-color: #007bff; color: white; border: none; padding: 12px 18px; border-radius: 4px; cursor: pointer; font-size: 14px; }
-        button:hover { background-color: #0069d9; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { padding: 12px 10px; border-bottom: 1px solid #e8e8e8; text-align: left; vertical-align: top; }
-        th { background: #f8f8f8; }
-        .small-button { padding: 8px 12px; font-size: 13px; margin-right: 8px; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        .small-button.delete { background-color: #dc3545; }
-        .message { padding: 14px 16px; margin-bottom: 20px; border-radius: 6px; font-weight: 600; }
-        .message.error { background-color: #fdecea; color: #b72128; border: 1px solid #f5c2c7; }
-        .message.success { background-color: #e6ffed; color: #1f6e33; border: 1px solid #b7eb8f; }
-        .assistant-message-text { white-space: pre-wrap; background: #ffffff; border: 1px solid #e2e2e2; padding: 12px; border-radius: 6px; }
-    </style>
-</head>
-<body>
-<div class="container">
-    <h1>Manage Assistant Messages</h1>
+{% extends 'auth_app/base.html' %}
+
+{% block title %}Manage Assistant Messages{% endblock %}
+
+{% block content %}
+    <h1 class="page-title">Manage Assistant Messages</h1>
 
     {% if messages %}
         {% for message in messages %}
@@ -99,11 +74,11 @@
         {% endif %}
     </div>
 
-    <a href="{% url 'auth_app:dashboard' %}" class="nav-link">Back to dashboard</a>
-    <a href="{% url 'auth_app:schedules' %}" class="nav-link" style="background-color: #17a2b8;">Manage schedules</a>
-    <a href="{% url 'auth_app:prompts' %}" class="nav-link" style="background-color: #6f42c1;">Manage prompts</a>
-    <a href="{% url 'auth_app:topics' %}" class="nav-link" style="background-color: #6c757d;">Manage topics</a>
-    <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>
-</div>
-</body>
-</html>
+    <div class="nav-row">
+        <a href="{% url 'auth_app:dashboard' %}" class="nav-link">Back to dashboard</a>
+        <a href="{% url 'auth_app:schedules' %}" class="nav-link" style="background-color: #17a2b8;">Manage schedules</a>
+        <a href="{% url 'auth_app:prompts' %}" class="nav-link" style="background-color: #6f42c1;">Manage prompts</a>
+        <a href="{% url 'auth_app:topics' %}" class="nav-link" style="background-color: #6c757d;">Manage topics</a>
+        <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>
+    </div>
+{% endblock %}

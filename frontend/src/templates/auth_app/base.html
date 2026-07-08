@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Content Manager{% endblock %}</title>
+    <style>
+        :root {
+            --page-bg: #eef3f8;
+            --page-accent: linear-gradient(135deg, rgba(19, 96, 175, 0.18), rgba(24, 165, 140, 0.16));
+            --surface: rgba(255, 255, 255, 0.9);
+            --surface-strong: #ffffff;
+            --surface-muted: #f7fafc;
+            --text-main: #18212b;
+            --text-soft: #4b5a6a;
+            --border: rgba(24, 33, 43, 0.12);
+            --shadow: 0 18px 40px rgba(18, 28, 45, 0.12);
+            --primary: #1360af;
+            --primary-hover: #0e4e8f;
+            --danger: #c53d37;
+            --success-bg: #e8fff0;
+            --success-text: #1f6e33;
+            --success-border: #b7eb8f;
+            --error-bg: #fdecea;
+            --error-text: #b72128;
+            --error-border: #f5c2c7;
+            --warning-bg: #fff4d6;
+            --warning-text: #855b00;
+            --warning-border: #f0d182;
+            --table-head: #edf3f8;
+            --input-bg: #ffffff;
+        }
+
+        body.theme-dark {
+            --page-bg: #0d1520;
+            --page-accent: linear-gradient(135deg, rgba(77, 132, 255, 0.12), rgba(11, 182, 149, 0.12));
+            --surface: rgba(20, 30, 44, 0.92);
+            --surface-strong: #172231;
+            --surface-muted: #121b27;
+            --text-main: #ecf3fb;
+            --text-soft: #9cafc3;
+            --border: rgba(196, 214, 232, 0.12);
+            --shadow: 0 20px 45px rgba(0, 0, 0, 0.34);
+            --primary: #5aa2ff;
+            --primary-hover: #7ab4ff;
+            --danger: #ff726b;
+            --success-bg: rgba(35, 92, 55, 0.45);
+            --success-text: #b6efc5;
+            --success-border: rgba(111, 201, 137, 0.45);
+            --error-bg: rgba(120, 35, 43, 0.46);
+            --error-text: #ffc3c7;
+            --error-border: rgba(229, 120, 132, 0.38);
+            --warning-bg: rgba(117, 84, 18, 0.4);
+            --warning-text: #ffd982;
+            --warning-border: rgba(224, 174, 57, 0.36);
+            --table-head: #1b293b;
+            --input-bg: #0f1723;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            min-height: 100vh;
+            background: var(--page-accent), var(--page-bg);
+            color: var(--text-main);
+        }
+        .page-shell {
+            width: min(1120px, calc(100% - 32px));
+            margin: 32px auto;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: center;
+            margin-bottom: 18px;
+            padding: 18px 22px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(14px);
+        }
+        .brand h1 {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.1;
+        }
+        .brand p {
+            margin: 6px 0 0;
+            color: var(--text-soft);
+        }
+        .theme-form {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .theme-form label {
+            font-weight: 700;
+            color: var(--text-soft);
+        }
+        .container {
+            background: var(--surface);
+            padding: 28px;
+            border-radius: 24px;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(14px);
+        }
+        h1, h2 {
+            color: var(--text-main);
+        }
+        p, td, th, label, div {
+            color: inherit;
+        }
+        .page-title {
+            margin-top: 0;
+            margin-bottom: 18px;
+        }
+        .message { padding: 14px 16px; margin-bottom: 20px; border-radius: 10px; font-weight: 600; border: 1px solid transparent; }
+        .message.error { background-color: var(--error-bg); color: var(--error-text); border-color: var(--error-border); }
+        .message.success { background-color: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+        .panel { background: var(--surface-muted); border: 1px solid var(--border); border-radius: 18px; padding: 20px; }
+        .nav-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+        .nav-link, .logout-link, button, .small-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 18px;
+            color: white;
+            text-decoration: none;
+            border-radius: 999px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.15s ease;
+        }
+        .nav-link, button { background-color: var(--primary); }
+        .logout-link { background-color: var(--danger); }
+        .nav-link:hover, .logout-link:hover, button:hover, .small-button:hover { opacity: 0.95; transform: translateY(-1px); }
+        .small-button { padding: 8px 12px; font-size: 13px; }
+        .small-button.edit { background-color: #17a2b8; }
+        .small-button.delete { background-color: var(--danger); }
+        .small-button.publish { background-color: #28a745; }
+        .small-button.reject { background-color: #ffc107; color: #212529; }
+        input[type="text"], input[type="password"], select, textarea {
+            width: 100%;
+            padding: 10px 12px;
+            margin-bottom: 15px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--input-bg);
+            color: var(--text-main);
+            font-size: 14px;
+        }
+        textarea { min-height: 120px; resize: vertical; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+        th { background: var(--table-head); }
+        .warning { background-color: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning-text); padding: 12px; border-radius: 10px; margin-bottom: 20px; }
+        .draft-content, .prompt-text, .assistant-message-text {
+            white-space: pre-wrap;
+            margin-top: 8px;
+            background: var(--surface-strong);
+            border: 1px solid var(--border);
+            padding: 12px;
+            border-radius: 10px;
+        }
+        .status {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 12px;
+            font-weight: bold;
+            text-align: center;
+            border: 1px solid var(--border);
+        }
+        .status-running { background-color: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+        .status-not-running { background-color: var(--error-bg); color: var(--error-text); border-color: var(--error-border); }
+        .grid { display: grid; gap: 24px; }
+        .dashboard-grid { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .dashboard-grid .panel p { font-size: 18px; margin-bottom: 10px; color: var(--text-soft); }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: #7d8791;
+            transition: .4s;
+            border-radius: 26px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: #4caf50; }
+        input:checked + .slider:before { transform: translateX(24px); }
+        @media (max-width: 860px) {
+            .topbar { flex-direction: column; align-items: flex-start; }
+            .dashboard-grid { grid-template-columns: 1fr; }
+            .page-shell { width: min(100% - 20px, 1120px); margin: 20px auto; }
+            .container { padding: 20px; }
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="theme-{{ current_theme|default:'light' }}">
+    <div class="page-shell">
+        {% if user.is_authenticated %}
+            <div class="topbar">
+                <div class="brand">
+                    <h1>Content Manager</h1>
+                    <p>Signed in as {{ user.username }}</p>
+                </div>
+                <form method="post" action="{% url 'auth_app:set_theme' %}" class="theme-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                    <label for="global-theme">Theme</label>
+                    <select id="global-theme" name="theme" onchange="this.form.submit()">
+                        {% for theme_value, theme_label in theme_options %}
+                            <option value="{{ theme_value }}" {% if current_theme == theme_value %}selected{% endif %}>{{ theme_label }}</option>
+                        {% endfor %}
+                    </select>
+                </form>
+            </div>
+        {% endif %}
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+</body>
+</html>

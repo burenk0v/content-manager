@@ -8,6 +8,8 @@ from django.contrib.auth.decorators import login_required
 import requests
 import os
 
+from auth_app.models import set_user_theme
+
 BACKEND_API_URL = os.environ.get('BACKEND_API_URL', 'http://localhost:8000')
 SERVICE_TOKEN = os.environ.get('SERVICE_ACCOUNT_TOKEN')
 LANGUAGE_OPTIONS = [
@@ -86,6 +88,15 @@ def login_view(request):
             messages.error(request, 'Invalid username or password')
 
     return render(request, 'auth_app/login.html')
+
+
+@login_required
+def set_theme_view(request):
+    if request.method == 'POST':
+        theme = request.POST.get('theme', '')
+        set_user_theme(request.user, theme)
+    next_url = request.POST.get('next') or request.META.get('HTTP_REFERER') or 'auth_app:dashboard'
+    return redirect(next_url)
 
 
 @login_required
