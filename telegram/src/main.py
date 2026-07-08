@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from typing import Any
 
 from aiogram import Bot, Dispatcher, types
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -140,6 +141,12 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMINS
 
 
+def is_bot_target_forbidden(exc: TelegramForbiddenError) -> bool:
+    # Telegram can report this with slightly different phrasing.
+    message = str(exc).lower()
+    return "send messages to bots" in message or "can't send messages to the bot" in message
+
+
 async def delete_callback_message(bot: Bot, callback: types.CallbackQuery) -> None:
     try:
         await bot.delete_message(callback.message.chat.id, callback.message.message_id)
@@ -215,26 +222,57 @@ async def main():
                 await callback.answer("Schedule not found.", show_alert=True)
                 return
 
+            should_delete_message = True
             try:
                 raw_text = draft.get("generated_text") or ""
                 formatted_text = prepare_telegram_content(raw_text)
 
-                await bot.send_message(
-                    schedule["chat_id"],
-                    formatted_text,
-                    parse_mode="HTML"
-                )
-            except Exception as html_exc:
-                logging.warning("HTML send failed for draft %s, retrying without parse_mode: %s", draft_id, html_exc)
-                await bot.send_message(schedule["chat_id"], raw_text)
+                try:
+                    await bot.send_message(
+                        schedule["chat_id"],
+                        formatted_text,
+                        parse_mode="HTML"
+                    )
+                except TelegramForbiddenError as forbidden_exc:
+                    if is_bot_target_forbidden(forbidden_exc):
+                        should_delete_message = False
+                        logging.warning(
+                            "Draft %s not sent: schedule %s has bot target chat_id=%s",
+                            draft_id,
+                            schedule.get("id"),
+                            schedule.get("chat_id"),
+                        )
+                        await callback.answer(
+                            "Неверный chat_id в расписании: указан ID бота вместо канала. Исправьте расписание и нажмите Approve снова.",
+                            show_alert=True,
+                        )
+                        await bot.send_message(
+                            uid,
+                            (
+                                "Ошибка отправки: в расписании указан ID бота вместо канала.\n"
+                                f"Расписание: {schedule.get('name', schedule.get('id'))}\n"
+                                f"chat_id: {schedule.get('chat_id')}\n\n"
+                                "Исправьте chat_id в расписании и снова нажмите Approve в этом драфте."
+                            ),
+                        )
+                        return
+                    raise
+                except Exception as html_exc:
+                    logging.warning("HTML send failed for draft %s, retrying without parse_mode: %s", draft_id, html_exc)
+                    await bot.send_message(schedule["chat_id"], raw_text)
 
-            try:
                 await update_draft_status(draft_id, "published")
                 await callback.answer("Post approved.")
+            except TelegramForbiddenError as forbidden_exc:
+                should_delete_message = False
+                logging.warning("Draft %s send forbidden: %s", draft_id, forbidden_exc)
+                await callback.answer("Telegram запретил отправку в этот чат. Проверьте chat_id и права бота.", show_alert=True)
             except Exception:
+                should_delete_message = False
                 await callback.answer("Failed to approve post.", show_alert=True)
             finally:
-                await delete_callback_message(bot, callback)
+                if should_delete_message:
+                    await delete_callback_message(bot, callback)
 
         elif data.startswith("reject:"):
             draft_id = int(data.split(":", 1)[1])
