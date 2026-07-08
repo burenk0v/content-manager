@@ -625,6 +625,7 @@ def create_schedule(
         schedule_type=payload.schedule_type,
         schedule_value=payload.schedule_value,
         is_active=payload.is_active,
+        last_run=datetime.utcnow() if payload.schedule_type == "interval" else None,
     )
     db.add(schedule)
     db.commit()
@@ -664,7 +665,24 @@ def update_schedule(
         for field in ("schedule_type", "schedule_value")
         if field in update_data
     )
-    if schedule_definition_changed and "last_run" not in update_data:
+    manual_schedule_edit = any(
+        field in update_data
+        for field in (
+            "name",
+            "chat_id",
+            "chat_name",
+            "language",
+            "assistant_message",
+            "prompt_id",
+            "assistant_template_id",
+            "schedule_type",
+            "schedule_value",
+        )
+    )
+    effective_schedule_type = update_data.get("schedule_type", schedule.schedule_type)
+    if manual_schedule_edit and effective_schedule_type == "interval" and "last_run" not in update_data:
+        update_data["last_run"] = datetime.utcnow()
+    elif schedule_definition_changed and "last_run" not in update_data:
         update_data["last_run"] = None
     for key, value in update_data.items():
         setattr(schedule, key, value)
