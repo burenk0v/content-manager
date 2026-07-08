@@ -508,7 +508,22 @@ def drafts_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         draft_id = request.POST.get('draft_id')
+        schedule_id = request.POST.get('schedule_id')
         try:
+            if action == 'regenerate_schedule':
+                result = backend_request('post', f'/content/schedules/{schedule_id}/regenerate')
+                if result.status_code == 200:
+                    messages.success(request, 'Regeneration requested. The bot will create a new draft on the next scheduler cycle.')
+                else:
+                    error_detail = 'Unable to request schedule regeneration'
+                    if result.text:
+                        try:
+                            error_detail = result.json().get('detail', error_detail)
+                        except ValueError:
+                            error_detail = result.text
+                    messages.error(request, error_detail)
+                return redirect('auth_app:drafts')
+
             if action == 'delete_draft':
                 result = backend_request('delete', f'/content/drafts/{draft_id}')
                 if result.status_code in (200, 204):

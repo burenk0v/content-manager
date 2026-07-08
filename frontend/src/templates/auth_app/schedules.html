@@ -124,12 +124,6 @@
                                 <a href="?edit_schedule={{ schedule.id }}" class="small-button edit">Edit</a>
                                 <form method="post" style="display:inline-block;">
                                     {% csrf_token %}
-                                    <input type="hidden" name="action" value="regenerate_schedule">
-                                    <input type="hidden" name="schedule_id" value="{{ schedule.id }}">
-                                    <button type="submit" class="small-button edit">Regenerate</button>
-                                </form>
-                                <form method="post" style="display:inline-block;">
-                                    {% csrf_token %}
                                     <input type="hidden" name="action" value="delete_schedule">
                                     <input type="hidden" name="schedule_id" value="{{ schedule.id }}">
                                     <button type="submit" class="small-button delete">Delete</button>

@@ -49,6 +49,12 @@
                                 </form>
                                 <form method="post" style="display:inline-block; margin-bottom: 6px;">
                                     {% csrf_token %}
+                                    <input type="hidden" name="action" value="regenerate_schedule">
+                                    <input type="hidden" name="schedule_id" value="{{ draft.schedule_id }}">
+                                    <button type="submit" class="small-button edit">Regenerate</button>
+                                </form>
+                                <form method="post" style="display:inline-block; margin-bottom: 6px;">
+                                    {% csrf_token %}
                                     <input type="hidden" name="action" value="delete_draft">
                                     <input type="hidden" name="draft_id" value="{{ draft.id }}">
                                     <button type="submit" class="small-button delete">Delete</button>
