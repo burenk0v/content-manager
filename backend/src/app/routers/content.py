@@ -355,7 +355,7 @@ def get_topics(
         db.query(Topic)
         .join(PostDraft, PostDraft.topic_id == Topic.id)
         .filter(PostDraft.status == "published")
-        .distinct(Topic.id)
+        .distinct()
         .order_by(Topic.created_at.desc())
         .all()
     )
