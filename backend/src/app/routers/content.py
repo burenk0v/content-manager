@@ -268,6 +268,9 @@ class DraftOut(DraftBase):
 
 
 def compute_next_run(schedule: PublicationSchedule) -> Optional[datetime]:
+    if not schedule.is_active:
+        return None
+
     now = datetime.utcnow()
     if schedule.schedule_type == "interval":
         try:
@@ -658,6 +661,7 @@ def update_schedule(
     effective_assistant_template_id = update_data.get("assistant_template_id", schedule.assistant_template_id)
     if not (effective_assistant_message or effective_assistant_template_id is not None):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="assistant_message or assistant_template_id is required")
+    was_active = schedule.is_active
     if "assistant_message" in update_data and update_data["assistant_message"] is None:
         update_data["assistant_message"] = ""
     schedule_definition_changed = any(
@@ -684,6 +688,8 @@ def update_schedule(
         update_data["last_run"] = datetime.utcnow()
     elif schedule_definition_changed and "last_run" not in update_data:
         update_data["last_run"] = None
+    elif update_data.get("is_active") is True and not was_active and effective_schedule_type == "interval" and "last_run" not in update_data:
+        update_data["last_run"] = datetime.utcnow()
     for key, value in update_data.items():
         setattr(schedule, key, value)
     db.commit()
