@@ -12,6 +12,7 @@ app = FastAPI()
 def on_startup():
     # Create DB tables if they don't exist
     db.Base.metadata.create_all(bind=db.engine)
+    db.ensure_schema()
 
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])

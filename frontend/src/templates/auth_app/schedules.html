@@ -105,8 +105,22 @@
                 <option value="es" {% if edit_schedule.language == 'es' %}selected{% endif %}>Spanish</option>
             </select>
 
+            <label for="prompt_id">Prompt</label>
+            <select id="prompt_id" name="prompt_id">
+                <option value="">No prompt</option>
+                {% for prompt in prompts %}
+                    <option value="{{ prompt.id }}" {% if edit_schedule.prompt_id == prompt.id %}selected{% endif %}>{{ prompt.name }} ({{ prompt.language }})</option>
+                {% endfor %}
+            </select>
+
             <label for="assistant_message">Assistant message</label>
-            <textarea id="assistant_message" name="assistant_message" required>{{ edit_schedule.assistant_message|default:'' }}</textarea>
+            <select id="assistant_template_id" name="assistant_template_id">
+                <option value="">No assistant template</option>
+                {% for assistant_message in assistant_messages %}
+                    <option value="{{ assistant_message.id }}" {% if edit_schedule.assistant_template_id == assistant_message.id %}selected{% endif %}>{{ assistant_message.name }} ({{ assistant_message.language }})</option>
+                {% endfor %}
+            </select>
+            <textarea id="assistant_message" name="assistant_message">{{ edit_schedule.assistant_message|default:'' }}</textarea>
 
             <label for="schedule_type">Schedule type</label>
             <select id="schedule_type" name="schedule_type" required>
@@ -169,6 +183,8 @@
                                 </form>
                             </td>
                             <td>
+                                {% if schedule.prompt_name %}<div style="margin-bottom: 8px; font-size: 12px; color: #555555;">Prompt: {{ schedule.prompt_name }}</div>{% endif %}
+                                {% if schedule.assistant_template_name %}<div style="margin-bottom: 8px; font-size: 12px; color: #555555;">Assistant: {{ schedule.assistant_template_name }}</div>{% endif %}
                                 <a href="?edit_schedule={{ schedule.id }}" class="small-button edit">Edit</a>
                                 <form method="post" style="display:inline-block;">
                                     {% csrf_token %}
@@ -188,6 +204,8 @@
 
     <a href="{% url 'auth_app:dashboard' %}" class="nav-link">Back to dashboard</a>
     <a href="{% url 'auth_app:topics' %}" class="nav-link" style="background-color: #17a2b8;">Manage topics</a>
+    <a href="{% url 'auth_app:prompts' %}" class="nav-link" style="background-color: #6f42c1;">Manage prompts</a>
+    <a href="{% url 'auth_app:assistant_messages' %}" class="nav-link" style="background-color: #fd7e14;">Manage assistant messages</a>
     <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>
 </div>
 </body>

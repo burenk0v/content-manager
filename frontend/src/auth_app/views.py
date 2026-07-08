@@ -96,12 +96,20 @@ def dashboard_view(request):
     db_status = health['db']
     topic_count = 0
     schedule_count = 0
+    prompt_count = 0
+    assistant_message_count = 0
     draft_count = 0
 
     try:
         topics_response = backend_request('get', '/content/topics')
         if topics_response.status_code == 200:
             topic_count = len(topics_response.json())
+        prompts_response = backend_request('get', '/content/prompts')
+        if prompts_response.status_code == 200:
+            prompt_count = len(prompts_response.json())
+        assistant_messages_response = backend_request('get', '/content/assistant-messages')
+        if assistant_messages_response.status_code == 200:
+            assistant_message_count = len(assistant_messages_response.json())
         schedules_response = backend_request('get', '/content/schedules')
         if schedules_response.status_code == 200:
             schedule_count = len(schedules_response.json())
@@ -115,6 +123,8 @@ def dashboard_view(request):
         'backend_status': backend_status,
         'db_status': db_status,
         'topic_count': topic_count,
+        'prompt_count': prompt_count,
+        'assistant_message_count': assistant_message_count,
         'schedule_count': schedule_count,
         'draft_count': draft_count,
     })
@@ -158,6 +168,106 @@ def topics_view(request):
 
 
 @login_required
+def prompts_view(request):
+    prompts = []
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        try:
+            if action == 'create_prompt':
+                payload = {
+                    'name': request.POST.get('prompt_name', '').strip(),
+                    'language': request.POST.get('prompt_language', '').strip(),
+                    'text': request.POST.get('prompt_text', ''),
+                }
+                result = backend_request('post', '/content/prompts', json=payload)
+                if result.status_code == 201:
+                    messages.success(request, 'Prompt created successfully.')
+                else:
+                    messages.error(request, result.json().get('detail', 'Unable to create prompt'))
+                return redirect('auth_app:prompts')
+
+            if action == 'delete_prompt':
+                prompt_id = request.POST.get('prompt_id')
+                result = backend_request('delete', f'/content/prompts/{prompt_id}')
+                if result.status_code in (200, 204):
+                    messages.success(request, 'Prompt deleted successfully.')
+                else:
+                    error_detail = 'Unable to delete prompt'
+                    if result.text:
+                        try:
+                            error_detail = result.json().get('detail', error_detail)
+                        except ValueError:
+                            error_detail = result.text
+                    messages.error(request, error_detail)
+                return redirect('auth_app:prompts')
+        except requests.RequestException as exc:
+            messages.error(request, f'Backend request failed: {exc}')
+            return redirect('auth_app:prompts')
+
+    try:
+        prompts_response = backend_request('get', '/content/prompts')
+        if prompts_response.status_code == 200:
+            prompts = prompts_response.json()
+    except Exception:
+        messages.error(request, 'Unable to load prompts.')
+
+    return render(request, 'auth_app/prompts.html', {
+        'prompts': prompts,
+    })
+
+
+@login_required
+def assistant_messages_view(request):
+    assistant_messages = []
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        try:
+            if action == 'create_assistant_message':
+                payload = {
+                    'name': request.POST.get('assistant_message_name', '').strip(),
+                    'language': request.POST.get('assistant_message_language', '').strip(),
+                    'text': request.POST.get('assistant_message_text', ''),
+                }
+                result = backend_request('post', '/content/assistant-messages', json=payload)
+                if result.status_code == 201:
+                    messages.success(request, 'Assistant message created successfully.')
+                else:
+                    messages.error(request, result.json().get('detail', 'Unable to create assistant message'))
+                return redirect('auth_app:assistant_messages')
+
+            if action == 'delete_assistant_message':
+                assistant_message_id = request.POST.get('assistant_message_id')
+                result = backend_request('delete', f'/content/assistant-messages/{assistant_message_id}')
+                if result.status_code in (200, 204):
+                    messages.success(request, 'Assistant message deleted successfully.')
+                else:
+                    error_detail = 'Unable to delete assistant message'
+                    if result.text:
+                        try:
+                            error_detail = result.json().get('detail', error_detail)
+                        except ValueError:
+                            error_detail = result.text
+                    messages.error(request, error_detail)
+                return redirect('auth_app:assistant_messages')
+        except requests.RequestException as exc:
+            messages.error(request, f'Backend request failed: {exc}')
+            return redirect('auth_app:assistant_messages')
+
+    try:
+        assistant_messages_response = backend_request('get', '/content/assistant-messages')
+        if assistant_messages_response.status_code == 200:
+            assistant_messages = assistant_messages_response.json()
+    except Exception:
+        messages.error(request, 'Unable to load assistant messages.')
+
+    return render(request, 'auth_app/assistant_messages.html', {
+        'assistant_messages': assistant_messages,
+    })
+
+
+@login_required
 def schedules_view(request):
     schedules = []
     edit_schedule = None
@@ -175,6 +285,10 @@ def schedules_view(request):
             if action == 'create_schedule':
                 schedule_type = request.POST.get('schedule_type', '').strip()
                 schedule_value = request.POST.get('schedule_value', '').strip()
+                prompt_id_raw = request.POST.get('prompt_id')
+                prompt_id = int(prompt_id_raw) if prompt_id_raw and prompt_id_raw.strip().isdigit() else None
+                assistant_template_id_raw = request.POST.get('assistant_template_id')
+                assistant_template_id = int(assistant_template_id_raw) if assistant_template_id_raw and assistant_template_id_raw.strip().isdigit() else None
                 if schedule_type == 'daily':
                     schedule_value = convert_local_time_to_utc(schedule_value, timezone_name)
                 payload = {
@@ -182,7 +296,9 @@ def schedules_view(request):
                     'chat_id': request.POST.get('chat_id', '').strip(),
                     'chat_name': request.POST.get('chat_name', '').strip(),
                     'language': request.POST.get('schedule_language', '').strip(),
-                    'assistant_message': request.POST.get('assistant_message', '').strip(),
+                    'assistant_message': request.POST.get('assistant_message', ''),
+                    'prompt_id': prompt_id,
+                    'assistant_template_id': assistant_template_id,
                     'schedule_type': schedule_type,
                     'schedule_value': schedule_value,
                     'is_active': request.POST.get('is_active') == 'on',
@@ -198,6 +314,10 @@ def schedules_view(request):
                 schedule_id = request.POST.get('schedule_id')
                 schedule_type = request.POST.get('schedule_type', '').strip()
                 schedule_value = request.POST.get('schedule_value', '').strip()
+                prompt_id_raw = request.POST.get('prompt_id')
+                prompt_id = int(prompt_id_raw) if prompt_id_raw and prompt_id_raw.strip().isdigit() else None
+                assistant_template_id_raw = request.POST.get('assistant_template_id')
+                assistant_template_id = int(assistant_template_id_raw) if assistant_template_id_raw and assistant_template_id_raw.strip().isdigit() else None
                 if schedule_type == 'daily':
                     schedule_value = convert_local_time_to_utc(schedule_value, timezone_name)
                 payload = {
@@ -205,7 +325,9 @@ def schedules_view(request):
                     'chat_id': request.POST.get('chat_id', '').strip(),
                     'chat_name': request.POST.get('chat_name', '').strip(),
                     'language': request.POST.get('schedule_language', '').strip(),
-                    'assistant_message': request.POST.get('assistant_message', '').strip(),
+                    'assistant_message': request.POST.get('assistant_message', ''),
+                    'prompt_id': prompt_id,
+                    'assistant_template_id': assistant_template_id,
                     'schedule_type': schedule_type,
                     'schedule_value': schedule_value,
                     'is_active': request.POST.get('is_active') == 'on',
@@ -253,6 +375,22 @@ def schedules_view(request):
     except Exception:
         messages.error(request, 'Unable to load schedules.')
 
+    prompts = []
+    try:
+        prompts_response = backend_request('get', '/content/prompts')
+        if prompts_response.status_code == 200:
+            prompts = prompts_response.json()
+    except Exception:
+        messages.error(request, 'Unable to load prompts.')
+
+    assistant_messages = []
+    try:
+        assistant_messages_response = backend_request('get', '/content/assistant-messages')
+        if assistant_messages_response.status_code == 200:
+            assistant_messages = assistant_messages_response.json()
+    except Exception:
+        messages.error(request, 'Unable to load assistant messages.')
+
     edit_schedule_id = request.GET.get('edit_schedule')
     if edit_schedule_id:
         edit_schedule = next((item for item in schedules if str(item.get('id')) == edit_schedule_id), None)
@@ -265,6 +403,8 @@ def schedules_view(request):
         'timezones': TIMEZONE_OPTIONS,
         'schedule_timezone': timezone_name,
         'schedules': schedules,
+        'prompts': prompts,
+        'assistant_messages': assistant_messages,
         'edit_schedule': edit_schedule,
     })
 

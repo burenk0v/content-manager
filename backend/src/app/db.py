@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./backend_db.sqlite3")
@@ -11,6 +11,23 @@ if DATABASE_URL.startswith("sqlite"):
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+def ensure_schema():
+    inspector = inspect(engine)
+
+    if "prompts" not in inspector.get_table_names() or "assistant_message_templates" not in inspector.get_table_names():
+        Base.metadata.create_all(bind=engine)
+        inspector = inspect(engine)
+
+    if "publication_schedules" in inspector.get_table_names():
+        column_names = {column["name"] for column in inspector.get_columns("publication_schedules")}
+        if "prompt_id" not in column_names:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE publication_schedules ADD COLUMN prompt_id INTEGER"))
+        if "assistant_template_id" not in column_names:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE publication_schedules ADD COLUMN assistant_template_id INTEGER"))
 
 def get_db():
     db = SessionLocal()

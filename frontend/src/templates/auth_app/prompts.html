@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Manage Drafts</title>
+    <title>Manage Prompts</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 1000px; margin: 40px auto; padding: 20px; background-color: #f5f5f5; }
         .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
@@ -10,23 +10,25 @@
         .logout-link { background-color: #dc3545; }
         .nav-link:hover, .logout-link:hover { opacity: 0.9; }
         .panel { background: #fafafa; border: 1px solid #e2e2e2; border-radius: 8px; padding: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; }
+        input[type="text"], select, textarea { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d1d1; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        textarea { min-height: 180px; resize: vertical; }
+        button { background-color: #007bff; color: white; border: none; padding: 12px 18px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        button:hover { background-color: #0069d9; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { padding: 12px 10px; border-bottom: 1px solid #e8e8e8; text-align: left; vertical-align: top; }
         th { background: #f8f8f8; }
-        textarea { width: 100%; min-height: 100px; padding: 10px; margin-top: 5px; border: 1px solid #d1d1d1; border-radius: 4px; font-size: 14px; }
         .small-button { padding: 8px 12px; font-size: 13px; margin-right: 8px; color: white; border: none; border-radius: 4px; cursor: pointer; }
         .small-button.delete { background-color: #dc3545; }
-        .small-button.publish { background-color: #28a745; }
-        .small-button.reject { background-color: #ffc107; color: #212529; }
         .message { padding: 14px 16px; margin-bottom: 20px; border-radius: 6px; font-weight: 600; }
         .message.error { background-color: #fdecea; color: #b72128; border: 1px solid #f5c2c7; }
         .message.success { background-color: #e6ffed; color: #1f6e33; border: 1px solid #b7eb8f; }
-        .draft-content { white-space: pre-wrap; margin-top: 8px; background: #ffffff; border: 1px solid #e2e2e2; padding: 12px; border-radius: 6px; }
+        .prompt-text { white-space: pre-wrap; background: #ffffff; border: 1px solid #e2e2e2; padding: 12px; border-radius: 6px; }
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>Manage Drafts</h1>
+    <h1>Manage Prompts</h1>
 
     {% if messages %}
         {% for message in messages %}
@@ -35,65 +37,70 @@
     {% endif %}
 
     <div class="panel">
-        {% if drafts %}
+        <h2>Create prompt</h2>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="create_prompt">
+
+            <label for="prompt_name">Prompt name</label>
+            <input id="prompt_name" name="prompt_name" type="text" required>
+
+            <label for="prompt_language">Language</label>
+            <select id="prompt_language" name="prompt_language" required>
+                <option value="">Select language</option>
+                <option value="ru">Russian</option>
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+            </select>
+
+            <label for="prompt_text">Prompt text</label>
+            <textarea id="prompt_text" name="prompt_text" required></textarea>
+
+            <button type="submit">Create prompt</button>
+        </form>
+    </div>
+
+    <div class="panel" style="margin-top: 24px;">
+        <h2>Existing prompts</h2>
+        {% if prompts %}
             <table>
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Schedule</th>
-                        <th>Topic</th>
-                        <th>Status</th>
+                        <th>Name</th>
+                        <th>Language</th>
+                        <th>Prompt</th>
                         <th>Created</th>
-                        <th>Updated</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for draft in drafts %}
+                    {% for prompt in prompts %}
                         <tr>
-                            <td>{{ draft.id }}</td>
-                            <td>{{ draft.schedule_id }}</td>
-                            <td>{{ draft.topic_name }} ({{ draft.language }})</td>
-                            <td>{{ draft.status }}</td>
-                            <td>{{ draft.created_at }}</td>
-                            <td>{{ draft.updated_at }}</td>
+                            <td>{{ prompt.id }}</td>
+                            <td>{{ prompt.name }}</td>
+                            <td>{{ prompt.language }}</td>
+                            <td><div class="prompt-text">{{ prompt.text }}</div></td>
+                            <td>{{ prompt.created_at }}</td>
                             <td>
-                                <form method="post" style="display:inline-block; margin-bottom: 6px;">
+                                <form method="post" style="display:inline-block;">
                                     {% csrf_token %}
-                                    <input type="hidden" name="action" value="publish_draft">
-                                    <input type="hidden" name="draft_id" value="{{ draft.id }}">
-                                    <button type="submit" class="small-button publish">Approve</button>
-                                </form>
-                                <form method="post" style="display:inline-block; margin-bottom: 6px;">
-                                    {% csrf_token %}
-                                    <input type="hidden" name="action" value="reject_draft">
-                                    <input type="hidden" name="draft_id" value="{{ draft.id }}">
-                                    <button type="submit" class="small-button reject">Reject</button>
-                                </form>
-                                <form method="post" style="display:inline-block; margin-bottom: 6px;">
-                                    {% csrf_token %}
-                                    <input type="hidden" name="action" value="delete_draft">
-                                    <input type="hidden" name="draft_id" value="{{ draft.id }}">
+                                    <input type="hidden" name="action" value="delete_prompt">
+                                    <input type="hidden" name="prompt_id" value="{{ prompt.id }}">
                                     <button type="submit" class="small-button delete">Delete</button>
                                 </form>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td colspan="7">
-                                <div class="draft-content">{{ draft.generated_text }}</div>
                             </td>
                         </tr>
                     {% endfor %}
                 </tbody>
             </table>
         {% else %}
-            <div class="message error">No drafts available yet.</div>
+            <div class="message error">No prompts created yet.</div>
         {% endif %}
     </div>
 
     <a href="{% url 'auth_app:dashboard' %}" class="nav-link">Back to dashboard</a>
     <a href="{% url 'auth_app:schedules' %}" class="nav-link" style="background-color: #17a2b8;">Manage schedules</a>
-    <a href="{% url 'auth_app:prompts' %}" class="nav-link" style="background-color: #6f42c1;">Manage prompts</a>
     <a href="{% url 'auth_app:assistant_messages' %}" class="nav-link" style="background-color: #fd7e14;">Manage assistant messages</a>
     <a href="{% url 'auth_app:topics' %}" class="nav-link" style="background-color: #6c757d;">Manage topics</a>
     <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>

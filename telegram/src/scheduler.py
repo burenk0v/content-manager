@@ -255,23 +255,39 @@ async def send_admin_message(bot: Bot, text: str, admins: list[int], reply_marku
     return sent_any
 
 
+def build_generation_prompt(schedule: dict[str, Any], used_names: set[str]) -> str:
+    existing_topics = ', '.join(sorted(used_names)) if used_names else 'none'
+    custom_prompt = schedule.get("prompt_text")
+    if custom_prompt:
+        return (
+            f"{custom_prompt}\n\n"
+            f"Language: {schedule['language']}\n"
+            "Return the result in this exact format:\n"
+            "TOPIC: <topic>\n"
+            "POST: <message>\n"
+            f"Existing topics: {existing_topics}"
+        )
+
+    return (
+        f"Generate a new Telegram post in {schedule['language']}. "
+        "First provide a unique topic and then the channel message. "
+        "Do not reuse existing topics. "
+        "Output in this exact format:\n\n"
+        "TOPIC: <topic>\n"
+        "POST: <message>\n\n"
+        "Existing topics: " + existing_topics
+    )
+
+
 async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: dict[str, Any], admins: list[int]) -> None:
     existing_topics = await fetch_topics()
     used_names = {topic.get("name", "").strip().lower() for topic in existing_topics}
-    system_message = schedule.get("assistant_message") or (
+    system_message = schedule.get("assistant_template_text") or schedule.get("assistant_message") or (
         "You are generating a Telegram post. Return only ready-to-send content with HTML formatting."
     )
 
     for attempt in range(3):
-        prompt = (
-            f"Generate a new Telegram post in {schedule['language']}. "
-            "First provide a unique topic and then the channel message. "
-            "Do not reuse existing topics. "
-            "Output in this exact format:\n\n"
-            "TOPIC: <topic>\n"
-            "POST: <message>\n\n"
-            "Existing topics: " + (', '.join(sorted(used_names)) if used_names else 'none')
-        )
+        prompt = build_generation_prompt(schedule, used_names)
 
         generated = ai_client.chat(prompt, system_message=system_message)
         parsed = parse_generation_output(generated)
