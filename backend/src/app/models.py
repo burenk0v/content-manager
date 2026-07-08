@@ -56,6 +56,7 @@ class PublicationSchedule(Base):
     schedule_value = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     last_run = Column(DateTime, nullable=True)
+    force_run_requested_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     prompt = relationship('Prompt', foreign_keys=[prompt_id])

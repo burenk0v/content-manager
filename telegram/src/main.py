@@ -259,6 +259,20 @@ async def main():
                 await callback.answer("Failed to delete draft.", show_alert=True)
             finally:
                 await delete_callback_message(bot, callback)
+        elif data.startswith("regenerate:"):
+            schedule_id = int(data.split(":", 1)[1])
+            schedule = await fetch_schedule(schedule_id)
+            if not schedule:
+                await callback.answer("Schedule not found.", show_alert=True)
+                return
+            if not schedule.get("is_active", False):
+                await callback.answer("Schedule is inactive.", show_alert=True)
+                return
+
+            await callback.answer("Regenerating draft...")
+            success = await generate_and_send_draft(bot, ai_client, schedule, ADMINS)
+            if not success:
+                await bot.send_message(uid, f"Не удалось перегенерировать расписание {schedule['name']}.")
         else:
             await callback.answer()
 

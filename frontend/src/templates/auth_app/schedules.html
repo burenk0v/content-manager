@@ -91,6 +91,7 @@
                         <th>Channel</th>
                         <th>Language</th>
                         <th>Timezone</th>
+                        <th>Last run</th>
                         <th>Next run</th>
                         <th>Active</th>
                         <th>Actions</th>
@@ -104,6 +105,7 @@
                             <td>{{ schedule.chat_name|default:schedule.chat_id }}</td>
                             <td>{{ schedule.language }}</td>
                             <td>{{ schedule.timezone|default:'UTC' }}</td>
+                            <td>{{ schedule.last_run_display|default:'n/a' }}</td>
                             <td>{{ schedule.next_run|default:'n/a' }}</td>
                             <td>
                                 <form method="post" style="display:inline-block; vertical-align: middle;">
@@ -120,6 +122,12 @@
                                 {% if schedule.prompt_name %}<div style="margin-bottom: 8px; font-size: 12px; color: var(--text-soft);">Prompt: {{ schedule.prompt_name }}</div>{% endif %}
                                 {% if schedule.assistant_template_name %}<div style="margin-bottom: 8px; font-size: 12px; color: var(--text-soft);">Assistant: {{ schedule.assistant_template_name }}</div>{% endif %}
                                 <a href="?edit_schedule={{ schedule.id }}" class="small-button edit">Edit</a>
+                                <form method="post" style="display:inline-block;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="regenerate_schedule">
+                                    <input type="hidden" name="schedule_id" value="{{ schedule.id }}">
+                                    <button type="submit" class="small-button edit">Regenerate</button>
+                                </form>
                                 <form method="post" style="display:inline-block;">
                                     {% csrf_token %}
                                     <input type="hidden" name="action" value="delete_schedule">

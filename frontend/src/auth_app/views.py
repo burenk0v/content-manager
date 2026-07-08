@@ -10,6 +10,7 @@ from auth_app.models import set_user_theme
 from auth_app.timezone_utils import (
     compute_schedule_next_run_display,
     convert_local_time_to_utc,
+    convert_utc_datetime_to_local,
     convert_utc_time_to_local,
 )
 
@@ -429,6 +430,21 @@ def schedules_view(request):
                             error_detail = result.text
                     messages.error(request, error_detail)
                 return redirect('auth_app:schedules')
+
+            if action == 'regenerate_schedule':
+                schedule_id = request.POST.get('schedule_id')
+                result = backend_request('post', f'/content/schedules/{schedule_id}/regenerate')
+                if result.status_code == 200:
+                    messages.success(request, 'Regeneration requested. The bot will create a new draft on the next scheduler cycle.')
+                else:
+                    error_detail = 'Unable to request schedule regeneration'
+                    if result.text:
+                        try:
+                            error_detail = result.json().get('detail', error_detail)
+                        except ValueError:
+                            error_detail = result.text
+                    messages.error(request, error_detail)
+                return redirect('auth_app:schedules')
         except requests.RequestException as exc:
             messages.error(request, f'Backend request failed: {exc}')
             return redirect('auth_app:schedules')
@@ -440,6 +456,8 @@ def schedules_view(request):
             for schedule in schedules:
                 item_timezone = schedule.get('timezone') or 'UTC'
                 schedule['timezone'] = item_timezone
+                raw_last_run = schedule.get('last_run')
+                schedule['last_run_display'] = convert_utc_datetime_to_local(raw_last_run, item_timezone) if raw_last_run else None
                 schedule['next_run'] = compute_schedule_next_run_display(schedule, item_timezone)
     except Exception:
         messages.error(request, 'Unable to load schedules.')

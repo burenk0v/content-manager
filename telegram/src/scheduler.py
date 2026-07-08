@@ -69,7 +69,11 @@ async def delete_draft(draft_id: int) -> None:
 
 
 async def update_schedule_last_run(schedule_id: int, last_run: datetime) -> None:
-    response = await backend_request("PUT", f"/content/schedules/{schedule_id}", json={"last_run": last_run.isoformat()})
+    response = await backend_request(
+        "PUT",
+        f"/content/schedules/{schedule_id}",
+        json={"last_run": last_run.isoformat(), "force_run_requested_at": None},
+    )
     try:
         response.raise_for_status()
     except Exception as exc:
@@ -259,16 +263,16 @@ def build_generation_prompt(schedule: dict[str, Any], used_names: set[str]) -> s
     )
 
 
-async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: dict[str, Any], admins: list[int]) -> None:
+async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: dict[str, Any], admins: list[int]) -> bool:
     # Re-read schedule state to avoid processing a schedule that was disabled
     # right after the ready list was fetched.
     current_schedule = await fetch_schedule(schedule["id"])
     if not current_schedule:
         logging.info("Schedule %s was removed before processing", schedule.get("id"))
-        return
+        return False
     if not current_schedule.get("is_active", False):
         logging.info("Skipping inactive schedule %s", current_schedule.get("id"))
-        return
+        return False
 
     schedule = current_schedule
     existing_topics = await fetch_topics()
@@ -294,7 +298,7 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
         refreshed_schedule = await fetch_schedule(schedule["id"])
         if not refreshed_schedule or not refreshed_schedule.get("is_active", False):
             logging.info("Schedule %s became inactive during generation", schedule.get("id"))
-            return
+            return False
 
         schedule = refreshed_schedule
         generated_text = prepare_telegram_content(generated_text)
@@ -312,6 +316,7 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
                 InlineKeyboardButton(text="Reject", callback_data=f"reject:{draft['id']}"),
             ],
             [
+                InlineKeyboardButton(text="Regenerate", callback_data=f"regenerate:{schedule['id']}"),
                 InlineKeyboardButton(text="Delete", callback_data=f"delete:{draft['id']}"),
             ],
         ])
@@ -325,11 +330,13 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
         sent = await send_admin_message(bot, payload_text, admins, keyboard)
         if sent:
             await update_schedule_last_run(schedule['id'], datetime.utcnow())
+            return True
         else:
             logging.warning("Draft created for schedule %s but admin message failed", schedule['name'])
-        return
+        return False
 
     await send_admin_message(bot, f"⚠️ Не удалось сгенерировать уникальный пост для расписания {schedule['name']}. Попробуйте проверить темы или настройки ассистента.", admins)
+    return False
 
 
 async def schedule_worker(bot: Bot, ai_client: OpenAIClient, admins: list[int]) -> None:

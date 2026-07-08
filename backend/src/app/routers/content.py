@@ -175,6 +175,7 @@ class ScheduleUpdate(BaseModel):
     schedule_value: Optional[str] = None
     is_active: Optional[bool] = None
     last_run: Optional[datetime] = None
+    force_run_requested_at: Optional[datetime] = None
 
     @validator("language")
     def validate_language(cls, value):
@@ -241,6 +242,7 @@ class ScheduleUpdate(BaseModel):
 class ScheduleOut(ScheduleBase):
     id: int
     last_run: Optional[datetime]
+    force_run_requested_at: Optional[datetime]
     created_at: datetime
     next_run: Optional[datetime] = None
     prompt_name: Optional[str] = None
@@ -327,6 +329,8 @@ def compute_next_run(schedule: PublicationSchedule) -> Optional[datetime]:
 def is_schedule_due(schedule: PublicationSchedule) -> bool:
     if not schedule.is_active:
         return False
+    if schedule.force_run_requested_at is not None:
+        return True
     now = datetime.utcnow()
     if schedule.schedule_type == "interval":
         if schedule.last_run is None:
@@ -366,6 +370,7 @@ def schedule_out(schedule: PublicationSchedule) -> ScheduleOut:
         schedule_value=schedule.schedule_value,
         is_active=schedule.is_active,
         last_run=schedule.last_run,
+        force_run_requested_at=schedule.force_run_requested_at,
         created_at=schedule.created_at,
         next_run=compute_next_run(schedule),
         prompt_name=schedule.prompt.name if schedule.prompt else None,
@@ -658,6 +663,7 @@ def create_schedule(
         schedule_value=payload.schedule_value,
         is_active=payload.is_active,
         last_run=datetime.utcnow() if payload.schedule_type == "interval" else None,
+        force_run_requested_at=None,
     )
     db.add(schedule)
     db.commit()
@@ -720,8 +726,30 @@ def update_schedule(
         update_data["last_run"] = None
     elif update_data.get("is_active") is True and not was_active and effective_schedule_type == "interval" and "last_run" not in update_data:
         update_data["last_run"] = datetime.utcnow()
+    if update_data.get("is_active") is False:
+        update_data["force_run_requested_at"] = None
     for key, value in update_data.items():
         setattr(schedule, key, value)
+    db.commit()
+    db.refresh(schedule)
+    return schedule_out(schedule)
+
+
+@router.post("/schedules/{schedule_id}/regenerate", response_model=ScheduleOut)
+def request_schedule_regeneration(
+    schedule_id: int,
+    x_service_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if not _check_service_token(x_service_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
+    schedule = db.query(PublicationSchedule).filter(PublicationSchedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+    if not schedule.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive schedules cannot be regenerated")
+
+    schedule.force_run_requested_at = datetime.utcnow()
     db.commit()
     db.refresh(schedule)
     return schedule_out(schedule)
