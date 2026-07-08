@@ -403,6 +403,32 @@ def create_prompt(
     return prompt
 
 
+@router.put("/prompts/{prompt_id}", response_model=PromptOut)
+def update_prompt(
+    prompt_id: int,
+    payload: PromptCreate,
+    x_service_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if not _check_service_token(x_service_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
+    prompt = db.query(Prompt).filter(Prompt.id == prompt_id).first()
+    if not prompt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prompt not found")
+
+    prompt.name = payload.name.strip()
+    prompt.language = payload.language.strip()
+    prompt.text = payload.text
+
+    try:
+        db.commit()
+        db.refresh(prompt)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prompt already exists")
+    return prompt
+
+
 @router.post("/assistant-messages", response_model=AssistantMessageTemplateOut, status_code=status.HTTP_201_CREATED)
 def create_assistant_message(
     payload: AssistantMessageTemplateCreate,
@@ -417,6 +443,36 @@ def create_assistant_message(
         text=payload.text,
     )
     db.add(assistant_message)
+    try:
+        db.commit()
+        db.refresh(assistant_message)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assistant message already exists")
+    return assistant_message
+
+
+@router.put("/assistant-messages/{assistant_message_id}", response_model=AssistantMessageTemplateOut)
+def update_assistant_message(
+    assistant_message_id: int,
+    payload: AssistantMessageTemplateCreate,
+    x_service_token: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    if not _check_service_token(x_service_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
+    assistant_message = (
+        db.query(AssistantMessageTemplate)
+        .filter(AssistantMessageTemplate.id == assistant_message_id)
+        .first()
+    )
+    if not assistant_message:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assistant message not found")
+
+    assistant_message.name = payload.name.strip()
+    assistant_message.language = payload.language.strip()
+    assistant_message.text = payload.text
+
     try:
         db.commit()
         db.refresh(assistant_message)

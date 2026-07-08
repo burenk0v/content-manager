@@ -12,26 +12,32 @@
     {% endif %}
 
     <div class="panel">
-        <h2>Create prompt</h2>
+        <h2>{% if edit_prompt %}Edit prompt{% else %}Create prompt{% endif %}</h2>
         <form method="post">
             {% csrf_token %}
-            <input type="hidden" name="action" value="create_prompt">
+            <input type="hidden" name="action" value="{% if edit_prompt %}update_prompt{% else %}create_prompt{% endif %}">
+            {% if edit_prompt %}
+                <input type="hidden" name="prompt_id" value="{{ edit_prompt.id }}">
+            {% endif %}
 
             <label for="prompt_name">Prompt name</label>
-            <input id="prompt_name" name="prompt_name" type="text" required>
+            <input id="prompt_name" name="prompt_name" type="text" value="{% if edit_prompt %}{{ edit_prompt.name }}{% endif %}" required>
 
             <label for="prompt_language">Language</label>
             <select id="prompt_language" name="prompt_language" required>
                 <option value="">Select language</option>
-                <option value="ru">Russian</option>
-                <option value="en">English</option>
-                <option value="es">Spanish</option>
+                <option value="ru" {% if edit_prompt and edit_prompt.language == 'ru' %}selected{% endif %}>Russian</option>
+                <option value="en" {% if edit_prompt and edit_prompt.language == 'en' %}selected{% endif %}>English</option>
+                <option value="es" {% if edit_prompt and edit_prompt.language == 'es' %}selected{% endif %}>Spanish</option>
             </select>
 
             <label for="prompt_text">Prompt text</label>
-            <textarea id="prompt_text" name="prompt_text" required></textarea>
+            <textarea id="prompt_text" name="prompt_text" required>{% if edit_prompt %}{{ edit_prompt.text }}{% endif %}</textarea>
 
-            <button type="submit">Create prompt</button>
+            <button type="submit">{% if edit_prompt %}Update prompt{% else %}Create prompt{% endif %}</button>
+            {% if edit_prompt %}
+                <a href="{% url 'auth_app:prompts' %}" class="nav-link" style="display:inline-block; margin-top:12px;">Cancel edit</a>
+            {% endif %}
         </form>
     </div>
 
@@ -58,6 +64,12 @@
                             <td><div class="prompt-text">{{ prompt.text }}</div></td>
                             <td>{{ prompt.created_at }}</td>
                             <td>
+                                <form method="post" style="display:inline-block;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="start_edit_prompt">
+                                    <input type="hidden" name="prompt_id" value="{{ prompt.id }}">
+                                    <button type="submit" class="small-button">Edit</button>
+                                </form>
                                 <form method="post" style="display:inline-block;">
                                     {% csrf_token %}
                                     <input type="hidden" name="action" value="delete_prompt">

@@ -12,26 +12,32 @@
     {% endif %}
 
     <div class="panel">
-        <h2>Create assistant message</h2>
+        <h2>{% if edit_assistant_message %}Edit assistant message{% else %}Create assistant message{% endif %}</h2>
         <form method="post">
             {% csrf_token %}
-            <input type="hidden" name="action" value="create_assistant_message">
+            <input type="hidden" name="action" value="{% if edit_assistant_message %}update_assistant_message{% else %}create_assistant_message{% endif %}">
+            {% if edit_assistant_message %}
+                <input type="hidden" name="assistant_message_id" value="{{ edit_assistant_message.id }}">
+            {% endif %}
 
             <label for="assistant_message_name">Name</label>
-            <input id="assistant_message_name" name="assistant_message_name" type="text" required>
+            <input id="assistant_message_name" name="assistant_message_name" type="text" value="{% if edit_assistant_message %}{{ edit_assistant_message.name }}{% endif %}" required>
 
             <label for="assistant_message_language">Language</label>
             <select id="assistant_message_language" name="assistant_message_language" required>
                 <option value="">Select language</option>
-                <option value="ru">Russian</option>
-                <option value="en">English</option>
-                <option value="es">Spanish</option>
+                <option value="ru" {% if edit_assistant_message and edit_assistant_message.language == 'ru' %}selected{% endif %}>Russian</option>
+                <option value="en" {% if edit_assistant_message and edit_assistant_message.language == 'en' %}selected{% endif %}>English</option>
+                <option value="es" {% if edit_assistant_message and edit_assistant_message.language == 'es' %}selected{% endif %}>Spanish</option>
             </select>
 
             <label for="assistant_message_text">Assistant message text</label>
-            <textarea id="assistant_message_text" name="assistant_message_text" required></textarea>
+            <textarea id="assistant_message_text" name="assistant_message_text" required>{% if edit_assistant_message %}{{ edit_assistant_message.text }}{% endif %}</textarea>
 
-            <button type="submit">Create assistant message</button>
+            <button type="submit">{% if edit_assistant_message %}Save changes{% else %}Create assistant message{% endif %}</button>
+            {% if edit_assistant_message %}
+                <a href="{% url 'auth_app:assistant_messages' %}" class="small-button" style="margin-left: 8px; text-decoration: none; display: inline-block;">Cancel</a>
+            {% endif %}
         </form>
     </div>
 
@@ -58,6 +64,12 @@
                             <td><div class="assistant-message-text">{{ assistant_message.text }}</div></td>
                             <td>{{ assistant_message.created_at }}</td>
                             <td>
+                                <form method="post" style="display:inline-block; margin-right: 8px;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="start_edit_assistant_message">
+                                    <input type="hidden" name="assistant_message_id" value="{{ assistant_message.id }}">
+                                    <button type="submit" class="small-button">Edit</button>
+                                </form>
                                 <form method="post" style="display:inline-block;">
                                     {% csrf_token %}
                                     <input type="hidden" name="action" value="delete_assistant_message">

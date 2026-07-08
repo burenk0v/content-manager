@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.urls import reverse
 import requests
 import os
 
@@ -167,10 +168,18 @@ def topics_view(request):
 @login_required
 def prompts_view(request):
     prompts = []
+    edit_prompt = None
 
     if request.method == 'POST':
         action = request.POST.get('action')
         try:
+            if action == 'start_edit_prompt':
+                prompt_id = request.POST.get('prompt_id', '').strip()
+                if prompt_id.isdigit():
+                    return redirect(f"{reverse('auth_app:prompts')}?edit={prompt_id}")
+                messages.error(request, 'Invalid prompt id')
+                return redirect('auth_app:prompts')
+
             if action == 'create_prompt':
                 payload = {
                     'name': request.POST.get('prompt_name', '').strip(),
@@ -182,6 +191,23 @@ def prompts_view(request):
                     messages.success(request, 'Prompt created successfully.')
                 else:
                     messages.error(request, result.json().get('detail', 'Unable to create prompt'))
+                return redirect('auth_app:prompts')
+
+            if action == 'update_prompt':
+                prompt_id = request.POST.get('prompt_id', '').strip()
+                if not prompt_id.isdigit():
+                    messages.error(request, 'Invalid prompt id')
+                    return redirect('auth_app:prompts')
+                payload = {
+                    'name': request.POST.get('prompt_name', '').strip(),
+                    'language': request.POST.get('prompt_language', '').strip(),
+                    'text': request.POST.get('prompt_text', ''),
+                }
+                result = backend_request('put', f'/content/prompts/{prompt_id}', json=payload)
+                if result.status_code == 200:
+                    messages.success(request, 'Prompt updated successfully.')
+                else:
+                    messages.error(request, result.json().get('detail', 'Unable to update prompt'))
                 return redirect('auth_app:prompts')
 
             if action == 'delete_prompt':
@@ -206,21 +232,35 @@ def prompts_view(request):
         prompts_response = backend_request('get', '/content/prompts')
         if prompts_response.status_code == 200:
             prompts = prompts_response.json()
+            edit_id = request.GET.get('edit', '').strip()
+            if edit_id.isdigit():
+                edit_prompt = next((prompt for prompt in prompts if prompt.get('id') == int(edit_id)), None)
+                if edit_prompt is None:
+                    messages.error(request, 'Prompt for editing not found.')
     except Exception:
         messages.error(request, 'Unable to load prompts.')
 
     return render(request, 'auth_app/prompts.html', {
         'prompts': prompts,
+        'edit_prompt': edit_prompt,
     })
 
 
 @login_required
 def assistant_messages_view(request):
     assistant_messages = []
+    edit_assistant_message = None
 
     if request.method == 'POST':
         action = request.POST.get('action')
         try:
+            if action == 'start_edit_assistant_message':
+                assistant_message_id = request.POST.get('assistant_message_id', '').strip()
+                if assistant_message_id.isdigit():
+                    return redirect(f"{reverse('auth_app:assistant_messages')}?edit={assistant_message_id}")
+                messages.error(request, 'Invalid assistant message id')
+                return redirect('auth_app:assistant_messages')
+
             if action == 'create_assistant_message':
                 payload = {
                     'name': request.POST.get('assistant_message_name', '').strip(),
@@ -232,6 +272,23 @@ def assistant_messages_view(request):
                     messages.success(request, 'Assistant message created successfully.')
                 else:
                     messages.error(request, result.json().get('detail', 'Unable to create assistant message'))
+                return redirect('auth_app:assistant_messages')
+
+            if action == 'update_assistant_message':
+                assistant_message_id = request.POST.get('assistant_message_id', '').strip()
+                if not assistant_message_id.isdigit():
+                    messages.error(request, 'Invalid assistant message id')
+                    return redirect('auth_app:assistant_messages')
+                payload = {
+                    'name': request.POST.get('assistant_message_name', '').strip(),
+                    'language': request.POST.get('assistant_message_language', '').strip(),
+                    'text': request.POST.get('assistant_message_text', ''),
+                }
+                result = backend_request('put', f'/content/assistant-messages/{assistant_message_id}', json=payload)
+                if result.status_code == 200:
+                    messages.success(request, 'Assistant message updated successfully.')
+                else:
+                    messages.error(request, result.json().get('detail', 'Unable to update assistant message'))
                 return redirect('auth_app:assistant_messages')
 
             if action == 'delete_assistant_message':
@@ -256,11 +313,20 @@ def assistant_messages_view(request):
         assistant_messages_response = backend_request('get', '/content/assistant-messages')
         if assistant_messages_response.status_code == 200:
             assistant_messages = assistant_messages_response.json()
+            edit_id = request.GET.get('edit', '').strip()
+            if edit_id.isdigit():
+                edit_assistant_message = next(
+                    (item for item in assistant_messages if item.get('id') == int(edit_id)),
+                    None,
+                )
+                if edit_assistant_message is None:
+                    messages.error(request, 'Assistant message for editing not found.')
     except Exception:
         messages.error(request, 'Unable to load assistant messages.')
 
     return render(request, 'auth_app/assistant_messages.html', {
         'assistant_messages': assistant_messages,
+        'edit_assistant_message': edit_assistant_message,
     })
 
 
