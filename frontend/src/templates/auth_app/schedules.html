@@ -24,7 +24,8 @@
             <input id="schedule_name" name="schedule_name" type="text" value="{{ edit_schedule.name|default:'' }}" required>
 
             <label for="chat_id">Channel chat ID</label>
-            <input id="chat_id" name="chat_id" type="text" value="{{ edit_schedule.chat_id|default:'' }}" required>
+            <input id="chat_id" name="chat_id" type="text" value="{{ edit_schedule.chat_id|default:'' }}" placeholder="-1001234567890 or @my_channel" pattern="^(-\\d+|@[A-Za-z0-9_]{5,})$" title="Use a negative channel/group ID (e.g. -1001234567890) or @channel_username." required>
+            <div class="warning" style="margin-top: -8px;">Use a negative channel/group ID or @channel username. Bot/user IDs are not allowed.</div>
 
             <label for="chat_name">Channel name</label>
             <input id="chat_name" name="chat_name" type="text" value="{{ edit_schedule.chat_name|default:'' }}">

@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime, date, timedelta, time
 from typing import List, Optional
 from zoneinfo import ZoneInfo
@@ -23,6 +24,26 @@ def _check_service_token(x_service_token: Optional[str] = Header(None)):
     if not expected:
         return True
     return x_service_token == expected
+
+
+def normalize_and_validate_chat_id(chat_id: str) -> str:
+    target = (chat_id or "").strip()
+    if not target:
+        raise ValueError("chat_id is required")
+
+    # Allow channel usernames like @my_channel.
+    if target.startswith("@"):
+        if re.fullmatch(r"@[A-Za-z0-9_]{5,}", target):
+            return target
+        raise ValueError("chat_id must be a valid @channel_username or a negative numeric chat id")
+
+    # Numeric chat ids are valid only for groups/channels (negative values).
+    if re.fullmatch(r"-?\d+", target):
+        if int(target) >= 0:
+            raise ValueError("chat_id must be a negative channel/group id, not a bot/user id")
+        return target
+
+    raise ValueError("chat_id must be a valid @channel_username or a negative numeric chat id")
 
 
 class TopicCreate(BaseModel):
@@ -107,6 +128,10 @@ class ScheduleBase(BaseModel):
             raise ValueError("language must be one of ru, en, es")
         return language
 
+    @validator("chat_id")
+    def validate_chat_id(cls, value):
+        return normalize_and_validate_chat_id(value)
+
     @validator("schedule_type")
     def validate_schedule_type(cls, value):
         value = value.strip().lower()
@@ -185,6 +210,12 @@ class ScheduleUpdate(BaseModel):
         if language not in VALID_LANGUAGES:
             raise ValueError("language must be one of ru, en, es")
         return language
+
+    @validator("chat_id")
+    def validate_chat_id(cls, value):
+        if value is None:
+            return value
+        return normalize_and_validate_chat_id(value)
 
     @validator("schedule_type")
     def validate_schedule_type(cls, value):

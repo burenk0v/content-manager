@@ -5,6 +5,7 @@ from django.contrib.auth.decorators import login_required
 from django.urls import reverse
 import requests
 import os
+import re
 
 from auth_app.models import set_user_theme
 from auth_app.timezone_utils import (
@@ -30,6 +31,24 @@ TIMEZONE_OPTIONS = [
     ('America/New_York', 'America/New_York'),
     ('America/Los_Angeles', 'America/Los_Angeles'),
 ]
+
+
+def validate_schedule_chat_id(chat_id: str) -> str | None:
+    target = (chat_id or '').strip()
+    if not target:
+        return 'Channel chat ID is required.'
+
+    if target.startswith('@'):
+        if re.fullmatch(r'@[A-Za-z0-9_]{5,}', target):
+            return None
+        return 'Channel chat ID must be a valid @channel_username or a negative numeric id.'
+
+    if re.fullmatch(r'-?\d+', target):
+        if int(target) >= 0:
+            return 'Looks like a bot/user ID. Use a channel/group chat ID (negative number), e.g. -1001234567890.'
+        return None
+
+    return 'Channel chat ID must be a valid @channel_username or a negative numeric id.'
 
 
 def backend_request(method: str, path: str, json=None, timeout=10):
@@ -349,6 +368,11 @@ def schedules_view(request):
             if action == 'create_schedule':
                 schedule_type = request.POST.get('schedule_type', '').strip()
                 schedule_value = request.POST.get('schedule_value', '').strip()
+                chat_id = request.POST.get('chat_id', '').strip()
+                chat_id_error = validate_schedule_chat_id(chat_id)
+                if chat_id_error:
+                    messages.error(request, chat_id_error)
+                    return redirect('auth_app:schedules')
                 prompt_id_raw = request.POST.get('prompt_id')
                 prompt_id = int(prompt_id_raw) if prompt_id_raw and prompt_id_raw.strip().isdigit() else None
                 assistant_template_id_raw = request.POST.get('assistant_template_id')
@@ -357,7 +381,7 @@ def schedules_view(request):
                     schedule_value = convert_local_time_to_utc(schedule_value, schedule_timezone)
                 payload = {
                     'name': request.POST.get('schedule_name', '').strip(),
-                    'chat_id': request.POST.get('chat_id', '').strip(),
+                    'chat_id': chat_id,
                     'chat_name': request.POST.get('chat_name', '').strip(),
                     'language': request.POST.get('schedule_language', '').strip(),
                     'assistant_message': request.POST.get('assistant_message', ''),
@@ -379,6 +403,11 @@ def schedules_view(request):
                 schedule_id = request.POST.get('schedule_id')
                 schedule_type = request.POST.get('schedule_type', '').strip()
                 schedule_value = request.POST.get('schedule_value', '').strip()
+                chat_id = request.POST.get('chat_id', '').strip()
+                chat_id_error = validate_schedule_chat_id(chat_id)
+                if chat_id_error:
+                    messages.error(request, chat_id_error)
+                    return redirect('auth_app:schedules')
                 prompt_id_raw = request.POST.get('prompt_id')
                 prompt_id = int(prompt_id_raw) if prompt_id_raw and prompt_id_raw.strip().isdigit() else None
                 assistant_template_id_raw = request.POST.get('assistant_template_id')
@@ -387,7 +416,7 @@ def schedules_view(request):
                     schedule_value = convert_local_time_to_utc(schedule_value, schedule_timezone)
                 payload = {
                     'name': request.POST.get('schedule_name', '').strip(),
-                    'chat_id': request.POST.get('chat_id', '').strip(),
+                    'chat_id': chat_id,
                     'chat_name': request.POST.get('chat_name', '').strip(),
                     'language': request.POST.get('schedule_language', '').strip(),
                     'assistant_message': request.POST.get('assistant_message', ''),
