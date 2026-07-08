@@ -227,7 +227,7 @@ class ScheduleOut(ScheduleBase):
 
 class DraftBase(BaseModel):
     schedule_id: int
-    topic_id: int
+    topic_id: Optional[int] = None
     topic_name: str
     language: str
     generated_text: str
@@ -247,6 +247,7 @@ class DraftCreate(DraftBase):
 class DraftUpdate(BaseModel):
     status: Optional[str] = None
     generated_text: Optional[str] = None
+    topic_id: Optional[int] = None
 
     @validator("status")
     def validate_status(cls, value):
@@ -635,9 +636,10 @@ def create_draft(
     schedule = db.query(PublicationSchedule).filter(PublicationSchedule.id == payload.schedule_id).first()
     if not schedule:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
-    topic = db.query(Topic).filter(Topic.id == payload.topic_id).first()
-    if not topic:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
+    if payload.topic_id is not None:
+        topic = db.query(Topic).filter(Topic.id == payload.topic_id).first()
+        if not topic:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
     draft = PostDraft(
         schedule_id=payload.schedule_id,
         topic_id=payload.topic_id,
@@ -696,6 +698,13 @@ def update_draft(
     if not draft:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
     update_data = payload.dict(exclude_unset=True)
+    if update_data.get("status") == "published" and draft.topic_id is None:
+        topic = db.query(Topic).filter(Topic.name == draft.topic_name.strip()).first()
+        if not topic:
+            topic = Topic(name=draft.topic_name.strip(), language=draft.language.strip())
+            db.add(topic)
+            db.flush()
+        update_data["topic_id"] = topic.id
     for key, value in update_data.items():
         setattr(draft, key, value)
     db.commit()

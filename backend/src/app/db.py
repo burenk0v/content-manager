@@ -29,6 +29,13 @@ def ensure_schema():
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE publication_schedules ADD COLUMN assistant_template_id INTEGER"))
 
+    if engine.dialect.name == "postgresql" and "post_drafts" in inspector.get_table_names():
+        draft_columns = {column["name"]: column for column in inspector.get_columns("post_drafts")}
+        topic_id_column = draft_columns.get("topic_id")
+        if topic_id_column and topic_id_column.get("nullable") is False:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE post_drafts ALTER COLUMN topic_id DROP NOT NULL"))
+
 def get_db():
     db = SessionLocal()
     try:

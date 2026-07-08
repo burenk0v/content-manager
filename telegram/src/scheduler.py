@@ -77,16 +77,8 @@ async def update_schedule_last_run(schedule_id: int, last_run: datetime) -> None
         raise
 
 
-async def create_topic(topic_name: str, language: str) -> dict[str, Any] | None:
-    response = await backend_request("POST", "/content/topics", json={"name": topic_name, "language": language})
-    if response.status_code == 201:
-        return response.json()
-    return None
-
-
 async def create_draft(
     schedule_id: int,
-    topic_id: int,
     topic_name: str,
     language: str,
     generated_text: str,
@@ -96,7 +88,6 @@ async def create_draft(
         "/content/drafts",
         json={
             "schedule_id": schedule_id,
-            "topic_id": topic_id,
             "topic_name": topic_name,
             "language": language,
             "generated_text": generated_text,
@@ -105,17 +96,6 @@ async def create_draft(
     )
     response.raise_for_status()
     return response.json()
-
-
-async def ensure_topic(topic_name: str, language: str, existing_topics: list[dict[str, Any]]) -> dict[str, Any] | None:
-    normalized = topic_name.strip()
-    if not normalized:
-        return None
-    normalized_lower = normalized.lower()
-    for topic in existing_topics:
-        if topic.get("name", "").strip().lower() == normalized_lower:
-            return topic
-    return await create_topic(normalized, language)
 
 
 def normalize_topic_name(text: str) -> str:
@@ -299,15 +279,10 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
             continue
 
         generated_text = prepare_telegram_content(generated_text)
-        topic = await ensure_topic(topic_name, schedule['language'], existing_topics)
-        if not topic:
-            existing_topics = await fetch_topics()
-            continue
 
         draft = await create_draft(
             schedule_id=schedule['id'],
-            topic_id=topic['id'],
-            topic_name=topic['name'],
+            topic_name=topic_name,
             language=schedule['language'],
             generated_text=generated_text,
         )
@@ -324,7 +299,7 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
 
         payload_text = (
             f"<b>Schedule:</b> {schedule['name']}\n"
-            f"<b>Topic:</b> {topic['name']}\n"
+            f"<b>Topic:</b> {topic_name}\n"
             f"<b>Language:</b> {schedule['language']}\n\n"
             f"{generated_text}"
         )

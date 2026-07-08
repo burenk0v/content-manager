@@ -65,7 +65,7 @@ class PostDraft(Base):
     __tablename__ = 'post_drafts'
     id = Column(Integer, primary_key=True, index=True)
     schedule_id = Column(Integer, ForeignKey('publication_schedules.id'), nullable=False)
-    topic_id = Column(Integer, ForeignKey('topics.id'), nullable=False)
+    topic_id = Column(Integer, ForeignKey('topics.id'), nullable=True)
     topic_name = Column(String, nullable=False)
     language = Column(String, nullable=False)
     generated_text = Column(Text, nullable=False)
