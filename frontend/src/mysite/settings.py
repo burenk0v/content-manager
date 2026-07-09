@@ -2,49 +2,30 @@
 Django settings for mysite project.
 """
 
+import os
 import socket
 from pathlib import Path
 
-
-def get_current_host_addresses() -> list[str]:
-    addresses: set[str] = set()
-
-    try:
-        hostname = socket.gethostname()
-        addresses.add(hostname)
-        addresses.update(socket.gethostbyname_ex(hostname)[2])
-    except OSError:
-        pass
-
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("8.8.8.8", 80))
-            addresses.add(sock.getsockname()[0])
-    except OSError:
-        pass
-
-    return sorted(addresses)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-345678901234567890123456789012345678901234567890'
+SECRET_KEY = os.getenv("FRONTEND_SECRET_KEY", "django-insecure-345678901234567890123456789012345678901234567890")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    'localhost',
-    '127.0.0.1',
     '0.0.0.0',
+    'localhost',
     'frontend',
-    *get_current_host_addresses(),
+    os.getenv("FRONTEND_HOST", "127.0.0.1"),
 ]
 CSRF_TRUSTED_ORIGINS = [
     'https://localhost:8443',
-    'https://127.0.0.1:8443',
-    *(f'https://{address}:8443' for address in get_current_host_addresses()),
+    'https://frontend:8443',
+    f'https://{os.getenv("FRONTEND_HOST", "127.0.0.1")}:8443',
 ]
 
 # Application definition

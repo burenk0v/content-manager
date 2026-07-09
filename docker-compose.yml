@@ -26,7 +26,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@database:5432/${DB_NAME:-content_manager}
-      SECRET_KEY: ${SECRET_KEY}
+      BACKEND_SECRET_KEY: ${BACKEND_SECRET_KEY}
     ports:
       - "8000:8000"
 
@@ -38,6 +38,8 @@ services:
       - backend
     environment:
       BACKEND_API_URL: http://backend:8000
+      FRONTEND_HOST: ${FRONTEND_HOST:-127.0.0.1}
+      FRONTEND_SECRET_KEY: ${FRONTEND_SECRET_KEY}
     ports:
       - "3000:8443"
 
@@ -49,7 +51,7 @@ services:
       - frontend
       - backend
     environment:
-      WEBAPP_URL: ${WEBAPP_URL:-https://example.com}
+      WEBAPP_URL: ${WEBAPP_URL}
       BOT_TOKEN: ${BOT_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ADMINS: ${ADMINS}
