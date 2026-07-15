@@ -52,13 +52,17 @@ This system provides:
 - **Port**: 8443 (HTTPS)
 - **Pages**:
   - Dashboard — backend and database health overview
+  - Dashboard — Docker container statuses and restart actions
   - Topics — view and delete AI-generated topics
   - Schedules — create, edit, delete publication schedules
   - Drafts — manage content drafts
+  - Telegram Settings — per-user Telegram/OpenAI config values
 - **Features**:
   - Multi-language support (Russian, English, Spanish)
   - Service-to-backend authentication
   - Schedule timezone conversion
+  - Per-user Telegram settings stored in UI database
+  - Docker container status and restart controls
 
 #### Telegram Bot (Aiogram)
 
@@ -87,11 +91,11 @@ Required configuration:
 | `DB_NAME` | `content_manager` | Database name |
 | `SERVICE_ACCOUNT_TOKEN` | — | Backend authentication token |
 | `SECRET_KEY` | — | Django/backend secret key |
-| `BOT_TOKEN` | — | Telegram bot token |
-| `ADMINS` | — | Comma-separated Telegram admin IDs |
-| `OPENAI_API_KEY` | — | OpenAI API key |
-| `WEBAPP_URL` | `https://example.com` | Public URL for WebApp |
-| `SCHEDULE_CHECK_INTERVAL_SECONDS` | `10` | Bot schedule check interval |
+| `BOT_TOKEN` | — | Used as initial value for per-user UI Telegram settings |
+| `ADMINS` | — | Used as initial value for per-user UI Telegram settings |
+| `OPENAI_API_KEY` | — | Used as initial value for per-user UI Telegram settings |
+| `WEBAPP_URL` | `https://example.com` | Used as initial value for per-user UI Telegram settings |
+| `SCHEDULE_CHECK_INTERVAL_SECONDS` | `10` | Used as initial value for per-user UI Telegram settings |
 
 ## Supported Languages
 

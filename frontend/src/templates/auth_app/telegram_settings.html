@@ -1,0 +1,55 @@
+{% extends 'auth_app/base.html' %}
+
+{% block title %}Telegram Settings{% endblock %}
+
+{% block content %}
+    <h1 class="page-title">Telegram Settings</h1>
+
+    <div class="warning">
+        Values are saved per signed-in user and override the old environment-only setup.
+    </div>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="message {{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+
+    <form method="post" class="panel">
+        {% csrf_token %}
+
+        <label for="bot_token">BOT_TOKEN</label>
+        <input id="bot_token" name="bot_token" type="text" value="{{ telegram_settings.bot_token|default:'' }}" placeholder="Telegram bot token">
+
+        <label for="openai_api_key">OPENAI_API_KEY</label>
+        <input id="openai_api_key" name="openai_api_key" type="text" value="{{ telegram_settings.openai_api_key|default:'' }}" placeholder="OpenAI API key">
+
+        <label for="admins">ADMINS</label>
+        <input id="admins" name="admins" type="text" value="{{ telegram_settings.admins|default:'' }}" placeholder="Comma-separated Telegram user IDs">
+
+        <label for="webapp_url">WEBAPP_URL</label>
+        <input id="webapp_url" name="webapp_url" type="text" value="{{ telegram_settings.webapp_url|default:'' }}" placeholder="Public HTTPS URL for Telegram WebApp button">
+
+        <label for="service_account_token">SERVICE_ACCOUNT_TOKEN</label>
+        <input id="service_account_token" name="service_account_token" type="text" value="{{ telegram_settings.service_account_token|default:'' }}" placeholder="Service account token">
+
+        <label for="backend_api_url">BACKEND_API_URL</label>
+        <input id="backend_api_url" name="backend_api_url" type="text" value="{{ telegram_settings.backend_api_url|default:'' }}" placeholder="Backend API URL">
+
+        <label for="schedule_check_interval_seconds">SCHEDULE_CHECK_INTERVAL_SECONDS</label>
+        <input
+            id="schedule_check_interval_seconds"
+            name="schedule_check_interval_seconds"
+            type="text"
+            value="{{ telegram_settings.schedule_check_interval_seconds|default:'10' }}"
+            placeholder="10"
+        >
+
+        <button type="submit">Save settings</button>
+    </form>
+
+    <div class="nav-row">
+        <a href="{% url 'auth_app:dashboard' %}" class="nav-link">Back to dashboard</a>
+        <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>
+    </div>
+{% endblock %}

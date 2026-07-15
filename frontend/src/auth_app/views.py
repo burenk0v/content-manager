@@ -7,7 +7,15 @@ import requests
 import os
 import re
 
-from auth_app.models import set_user_theme
+try:
+    import docker
+    from docker.errors import DockerException, NotFound
+except Exception:  # pragma: no cover - optional dependency at import time
+    docker = None
+    DockerException = Exception
+    NotFound = Exception
+
+from auth_app.models import set_user_theme, get_user_telegram_settings, set_user_telegram_settings
 from auth_app.timezone_utils import (
     compute_schedule_next_run_display,
     convert_local_time_to_utc,
@@ -17,6 +25,16 @@ from auth_app.timezone_utils import (
 
 BACKEND_API_URL = os.environ.get('BACKEND_API_URL', 'http://localhost:8000')
 SERVICE_TOKEN = os.environ.get('SERVICE_ACCOUNT_TOKEN')
+DEFAULT_TELEGRAM_SETTINGS = {
+    'bot_token': os.environ.get('BOT_TOKEN', ''),
+    'openai_api_key': os.environ.get('OPENAI_API_KEY', ''),
+    'admins': os.environ.get('ADMINS', ''),
+    'webapp_url': os.environ.get('WEBAPP_URL', ''),
+    'service_account_token': os.environ.get('SERVICE_ACCOUNT_TOKEN', ''),
+    'backend_api_url': os.environ.get('BACKEND_API_URL', 'http://backend:8000'),
+    'schedule_check_interval_seconds': int(os.environ.get('SCHEDULE_CHECK_INTERVAL_SECONDS', '10')),
+}
+DOCKER_MANAGED_CONTAINERS = ('database', 'backend', 'frontend', 'telegram')
 LANGUAGE_OPTIONS = [
     ('ru', 'Russian'),
     ('en', 'English'),
@@ -82,6 +100,59 @@ def get_backend_health():
     return status
 
 
+def _docker_client():
+    if docker is None:
+        raise RuntimeError('Docker SDK is not installed')
+    docker_host = os.environ.get('DOCKER_HOST', 'unix:///var/run/docker.sock')
+    return docker.DockerClient(base_url=docker_host)
+
+
+def get_docker_statuses():
+    statuses = []
+    try:
+        client = _docker_client()
+        try:
+            for name in DOCKER_MANAGED_CONTAINERS:
+                try:
+                    container = client.containers.get(name)
+                    container.reload()
+                    state = container.attrs.get('State', {})
+                    statuses.append({
+                        'name': name,
+                        'status': state.get('Status', container.status or 'unknown'),
+                        'health': state.get('Health', {}).get('Status') or 'n/a',
+                    })
+                except NotFound:
+                    statuses.append({'name': name, 'status': 'not-found', 'health': 'n/a'})
+        finally:
+            client.close()
+    except Exception as exc:
+        error_message = str(exc) or 'Unable to connect to Docker daemon'
+        for name in DOCKER_MANAGED_CONTAINERS:
+            statuses.append({'name': name, 'status': 'unavailable', 'health': error_message})
+    return statuses
+
+
+def restart_docker_container(container_name: str) -> tuple[bool, str]:
+    if container_name not in DOCKER_MANAGED_CONTAINERS:
+        return False, 'Unsupported container name.'
+
+    try:
+        client = _docker_client()
+        try:
+            container = client.containers.get(container_name)
+            container.restart(timeout=10)
+        finally:
+            client.close()
+        return True, f'Container {container_name} restarted.'
+    except NotFound:
+        return False, f'Container {container_name} not found.'
+    except DockerException as exc:
+        return False, str(exc) or 'Docker restart failed.'
+    except Exception as exc:
+        return False, str(exc) or 'Docker restart failed.'
+
+
 def login_view(request):
     """Login page"""
     if request.method == 'POST':
@@ -109,6 +180,17 @@ def set_theme_view(request):
 @login_required
 def dashboard_view(request):
     """Protected dashboard page with counts only."""
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'restart_container':
+            container_name = request.POST.get('container_name', '').strip()
+            ok, message = restart_docker_container(container_name)
+            if ok:
+                messages.success(request, message)
+            else:
+                messages.error(request, message)
+            return redirect('auth_app:dashboard')
+
     health = get_backend_health()
     backend_status = health['backend']
     db_status = health['db']
@@ -137,14 +219,48 @@ def dashboard_view(request):
     except Exception:
         messages.error(request, 'Unable to load backend counts.')
 
+    container_statuses = get_docker_statuses()
+
     return render(request, 'auth_app/dashboard.html', {
         'backend_status': backend_status,
         'db_status': db_status,
+        'container_statuses': container_statuses,
         'topic_count': topic_count,
         'prompt_count': prompt_count,
         'assistant_message_count': assistant_message_count,
         'schedule_count': schedule_count,
         'draft_count': draft_count,
+    })
+
+
+@login_required
+def telegram_settings_view(request):
+    settings_data = get_user_telegram_settings(request.user, DEFAULT_TELEGRAM_SETTINGS)
+
+    if request.method == 'POST':
+        raw_interval = request.POST.get('schedule_check_interval_seconds', '').strip()
+        try:
+            interval = int(raw_interval)
+            if interval <= 0:
+                raise ValueError()
+        except ValueError:
+            messages.error(request, 'Schedule check interval must be a positive integer in seconds.')
+            return redirect('auth_app:telegram_settings')
+
+        payload = {
+            'bot_token': request.POST.get('bot_token', '').strip(),
+            'openai_api_key': request.POST.get('openai_api_key', '').strip(),
+            'admins': request.POST.get('admins', '').strip(),
+            'webapp_url': request.POST.get('webapp_url', '').strip(),
+            'service_account_token': request.POST.get('service_account_token', '').strip(),
+            'backend_api_url': request.POST.get('backend_api_url', '').strip(),
+            'schedule_check_interval_seconds': interval,
+        }
+        settings_data = set_user_telegram_settings(request.user, payload, DEFAULT_TELEGRAM_SETTINGS)
+        messages.success(request, 'Telegram settings saved for your account.')
+
+    return render(request, 'auth_app/telegram_settings.html', {
+        'telegram_settings': settings_data,
     })
 
 

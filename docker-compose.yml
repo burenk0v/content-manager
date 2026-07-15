@@ -40,6 +40,8 @@ services:
       BACKEND_API_URL: http://backend:8000
       FRONTEND_HOST: ${FRONTEND_HOST:-127.0.0.1}
       FRONTEND_SECRET_KEY: ${FRONTEND_SECRET_KEY}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "3000:8443"
 
