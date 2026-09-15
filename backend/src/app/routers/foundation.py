@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import update
+from sqlalchemy import and_, or_, update
 from sqlalchemy.orm import Session
 
 from src.app.db import get_db
@@ -194,12 +194,32 @@ def list_publications(workspace_id: Optional[int] = None, db: Session = Depends(
     if workspace_id is not None: query = query.filter(Channel.workspace_id == workspace_id)
     return query.order_by(Publication.scheduled_at.asc(), Publication.id.asc()).all()
 
+@router.post("/publications/recover-stale", response_model=List[PublicationOut], dependencies=[Depends(require_service_token)])
+def recover_stale_publications(stale_after_seconds: int = 900, db: Session = Depends(get_db)):
+    cutoff = datetime.utcnow() - timedelta(seconds=max(60, min(stale_after_seconds, 86400)))
+    stale = db.query(Publication).filter(
+        Publication.status == "processing",
+        Publication.processing_started_at.is_not(None),
+        Publication.processing_started_at < cutoff,
+    ).all()
+    for publication in stale:
+        publication.status = "scheduled"
+        publication.next_attempt_at = datetime.utcnow()
+        publication.processing_started_at = None
+        publication.worker_id = None
+        publication.error_message = "Recovered stale processing claim"
+    if stale:
+        db.commit()
+        for publication in stale:
+            db.refresh(publication)
+    return stale
+
 @router.post("/publications/{publication_id}/claim", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def claim_publication(publication_id: int, payload: PublicationClaim, db: Session = Depends(get_db)):
     now = datetime.utcnow()
-    eligible = (
-        (Publication.scheduled_at.is_(None) | (Publication.scheduled_at <= now))
-        & (Publication.next_attempt_at.is_(None) | (Publication.next_attempt_at <= now))
+    eligible = and_(
+        or_(Publication.scheduled_at.is_(None), Publication.scheduled_at <= now),
+        or_(Publication.next_attempt_at.is_(None), Publication.next_attempt_at <= now),
     )
     result = db.execute(
         update(Publication)
@@ -255,23 +275,3 @@ def fail_publication(publication_id: int, payload: PublicationFail, db: Session 
     audit(db, channel.workspace_id, "publication", publication.id, action)
     db.commit(); db.refresh(publication)
     return publication
-
-@router.post("/publications/recover-stale", response_model=List[PublicationOut], dependencies=[Depends(require_service_token)])
-def recover_stale_publications(stale_after_seconds: int = 900, db: Session = Depends(get_db)):
-    cutoff = datetime.utcnow() - timedelta(seconds=max(60, min(stale_after_seconds, 86400)))
-    stale = db.query(Publication).filter(
-        Publication.status == "processing",
-        Publication.processing_started_at.is_not(None),
-        Publication.processing_started_at < cutoff,
-    ).all()
-    for publication in stale:
-        publication.status = "scheduled"
-        publication.next_attempt_at = datetime.utcnow()
-        publication.processing_started_at = None
-        publication.worker_id = None
-        publication.error_message = "Recovered stale processing claim"
-    if stale:
-        db.commit()
-        for publication in stale:
-            db.refresh(publication)
-    return stale
