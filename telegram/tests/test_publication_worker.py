@@ -12,16 +12,24 @@ class FakeBot:
         return type("Message", (), {"message_id": 42 + len(self.calls) - 1})()
 
 
+@pytest.fixture(autouse=True)
+def disable_heartbeat(monkeypatch):
+    async def heartbeat(publication_id, processing_token):
+        return None
+
+    monkeypatch.setattr("src.publication_worker.heartbeat_publication", heartbeat)
+
+
 @pytest.mark.asyncio
 async def test_publish_one_uses_telegram_adapter(monkeypatch):
     bot = FakeBot()
     completed = []
 
     async def claim(publication_id):
-        return {"id": 7, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "<b>Hello</b>", "attempt_count": 1}
+        return {"id": 7, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "<b>Hello</b>", "attempt_count": 1, "processing_token": "token-7"}
 
-    async def complete(publication_id, external_id):
-        completed.append((publication_id, external_id))
+    async def complete(publication_id, external_id, processing_token):
+        completed.append((publication_id, external_id, processing_token))
 
     monkeypatch.setattr("src.publication_worker.claim_publication", claim)
     monkeypatch.setattr("src.publication_worker.complete_publication", complete)
@@ -29,7 +37,7 @@ async def test_publish_one_uses_telegram_adapter(monkeypatch):
     await publish_one(bot, {"id": 7})
 
     assert bot.calls == [("@channel", "<b>Hello</b>", "HTML")]
-    assert completed == [(7, "42")]
+    assert completed == [(7, "42", "token-7")]
 
 
 @pytest.mark.asyncio
@@ -38,10 +46,10 @@ async def test_publish_one_splits_oversized_content(monkeypatch):
     completed = []
 
     async def claim(publication_id):
-        return {"id": 8, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "x" * 8000, "attempt_count": 1}
+        return {"id": 8, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "x" * 8000, "attempt_count": 1, "processing_token": "token-8"}
 
-    async def complete(publication_id, external_id):
-        completed.append((publication_id, external_id))
+    async def complete(publication_id, external_id, processing_token):
+        completed.append((publication_id, external_id, processing_token))
 
     monkeypatch.setattr("src.publication_worker.claim_publication", claim)
     monkeypatch.setattr("src.publication_worker.complete_publication", complete)
@@ -51,7 +59,7 @@ async def test_publish_one_splits_oversized_content(monkeypatch):
     assert len(bot.calls) == 3
     assert all(call[0] == "@channel" and call[2] == "HTML" for call in bot.calls)
     assert all(len(call[1]) <= 3800 for call in bot.calls)
-    assert completed == [(8, "42")]
+    assert completed == [(8, "42", "token-8")]
 
 
 @pytest.mark.asyncio
@@ -60,17 +68,17 @@ async def test_publish_one_rejects_unsupported_platform(monkeypatch):
     failures = []
 
     async def claim(publication_id):
-        return {"id": 9, "channel_platform": "instagram", "channel_external_id": "x", "content_body": "Hello", "attempt_count": 1}
+        return {"id": 9, "channel_platform": "instagram", "channel_external_id": "x", "content_body": "Hello", "attempt_count": 1, "processing_token": "token-9"}
 
-    async def fail(publication_id, error_message, attempt_count):
-        failures.append((publication_id, error_message, attempt_count))
+    async def fail(publication_id, error_message, attempt_count, processing_token):
+        failures.append((publication_id, error_message, attempt_count, processing_token))
 
     monkeypatch.setattr("src.publication_worker.claim_publication", claim)
     monkeypatch.setattr("src.publication_worker.fail_publication", fail)
 
     await publish_one(bot, {"id": 9})
 
-    assert failures == [(9, "Unsupported publication platform: instagram", 1)]
+    assert failures == [(9, "Unsupported publication platform: instagram", 1, "token-9")]
 
 
 @pytest.mark.asyncio
@@ -91,10 +99,10 @@ async def test_publish_one_persists_send_failure(monkeypatch):
     failures = []
 
     async def claim(publication_id):
-        return {"id": 7, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "Hello", "attempt_count": 2}
+        return {"id": 7, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "Hello", "attempt_count": 2, "processing_token": "token-7"}
 
-    async def fail(publication_id, error_message, attempt_count):
-        failures.append((publication_id, error_message, attempt_count))
+    async def fail(publication_id, error_message, attempt_count, processing_token):
+        failures.append((publication_id, error_message, attempt_count, processing_token))
 
     async def send_message(*args, **kwargs):
         raise RuntimeError("Telegram unavailable")
@@ -104,7 +112,7 @@ async def test_publish_one_persists_send_failure(monkeypatch):
     monkeypatch.setattr("src.publication_worker.fail_publication", fail)
 
     await publish_one(bot, {"id": 7})
-    assert failures == [(7, "Telegram unavailable", 2)]
+    assert failures == [(7, "Telegram unavailable", 2, "token-7")]
 
 
 def test_retry_delay_grows_exponentially(monkeypatch):
