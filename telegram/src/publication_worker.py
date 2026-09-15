@@ -7,6 +7,8 @@ from typing import Any
 import httpx
 from aiogram import Bot
 
+from telegram_format import prepare_telegram_chunks
+
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
 WORKER_ID = os.getenv("PUBLICATION_WORKER_ID") or f"telegram:{socket.gethostname()}"
@@ -79,16 +81,31 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
         return
 
     try:
-        if claimed.get("channel_platform") not in {None, "telegram"}:
-            raise RuntimeError(f"Unsupported publication platform: {claimed.get('channel_platform')}")
+        platform = claimed.get("channel_platform")
+        if platform not in {None, "telegram"}:
+            raise RuntimeError(f"Unsupported publication platform: {platform}")
 
-        sent = await bot.send_message(
-            claimed["channel_external_id"],
-            claimed["content_body"],
-            parse_mode="HTML",
+        chunks = prepare_telegram_chunks(claimed.get("content_body", ""))
+        if not chunks:
+            raise ValueError("Publication content is empty")
+
+        first_message_id: str | None = None
+        for chunk in chunks:
+            sent = await bot.send_message(
+                claimed["channel_external_id"],
+                chunk,
+                parse_mode="HTML",
+            )
+            if first_message_id is None:
+                first_message_id = str(sent.message_id)
+
+        await complete_publication(publication_id, first_message_id or "unknown")
+        logging.info(
+            "Publication %s published as %s Telegram message(s), first message %s",
+            publication_id,
+            len(chunks),
+            first_message_id,
         )
-        await complete_publication(publication_id, str(sent.message_id))
-        logging.info("Publication %s published as Telegram message %s", publication_id, sent.message_id)
     except Exception as exc:
         logging.exception("Publication %s failed", publication_id)
         try:
