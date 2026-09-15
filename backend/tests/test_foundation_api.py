@@ -1,5 +1,6 @@
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 os.environ["SERVICE_ACCOUNT_TOKEN"] = "test-token"
@@ -158,6 +159,40 @@ def test_publication_claim_is_single_owner_and_can_complete():
     assert completed.json()["status"] == "published"
     assert completed.json()["lease_heartbeat_at"] is None
     assert client.get(f"/content/contents/{publication['content_id']}/transitions", headers=HEADERS).json()["status"] == "published"
+
+
+def test_concurrent_claims_allow_exactly_one_worker_to_acquire_lease():
+    publication_id = create_publication()["id"]
+
+    def claim(worker_id):
+        with TestClient(app) as worker_client:
+            response = worker_client.post(
+                f"/content/publications/{publication_id}/claim",
+                json={"worker_id": worker_id},
+                headers=HEADERS,
+            )
+            return response.status_code, response.json()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(claim, ("worker-a", "worker-b")))
+
+    successes = [result for result in results if result[0] == 200]
+    conflicts = [result for result in results if result[0] == 409]
+    assert len(successes) == 1
+    assert len(conflicts) == 1
+    assert successes[0][1]["status"] == "processing"
+    assert successes[0][1]["processing_token"]
+    assert successes[0][1]["attempt_count"] == 1
+
+    db = TestingSession()
+    try:
+        persisted = db.query(Publication).filter(Publication.id == publication_id).one()
+        assert persisted.status == "processing"
+        assert persisted.worker_id == successes[0][1]["worker_id"]
+        assert persisted.processing_token == successes[0][1]["processing_token"]
+        assert persisted.attempt_count == 1
+    finally:
+        db.close()
 
 
 def test_publication_heartbeat_renews_owned_lease_and_rejects_wrong_token():
