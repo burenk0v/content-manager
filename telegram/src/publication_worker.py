@@ -18,6 +18,7 @@ MAX_ATTEMPTS = int(os.getenv("PUBLICATION_MAX_ATTEMPTS", "5"))
 RETRY_DELAY_SECONDS = int(os.getenv("PUBLICATION_RETRY_DELAY_SECONDS", "60"))
 RETRY_MAX_DELAY_SECONDS = int(os.getenv("PUBLICATION_RETRY_MAX_DELAY_SECONDS", "3600"))
 RETRY_JITTER_RATIO = float(os.getenv("PUBLICATION_RETRY_JITTER_RATIO", "0.25"))
+LEASE_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("PUBLICATION_LEASE_HEARTBEAT_INTERVAL_SECONDS", "60"))
 
 
 def backend_url(path: str) -> str:
@@ -45,6 +46,15 @@ async def claim_publication(publication_id: int) -> dict[str, Any] | None:
     if not claimed.get("processing_token"):
         raise RuntimeError(f"Publication {publication_id} was claimed without a processing lease")
     return claimed
+
+
+async def heartbeat_publication(publication_id: int, processing_token: str) -> None:
+    response = await backend_request(
+        "POST",
+        f"/content/publications/{publication_id}/heartbeat",
+        json={"worker_id": WORKER_ID, "processing_token": processing_token},
+    )
+    response.raise_for_status()
 
 
 async def complete_publication(publication_id: int, external_id: str, processing_token: str) -> None:
@@ -84,6 +94,22 @@ async def recover_stale_publications() -> None:
     response.raise_for_status()
 
 
+async def _lease_heartbeat(publication_id: int, processing_token: str) -> None:
+    while True:
+        await asyncio.sleep(max(1, LEASE_HEARTBEAT_INTERVAL_SECONDS))
+        try:
+            await heartbeat_publication(publication_id, processing_token)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409:
+                logging.warning("Publication %s lease was lost", publication_id)
+            else:
+                logging.exception("Failed to renew lease for publication %s", publication_id)
+            return
+        except Exception:
+            logging.exception("Failed to renew lease for publication %s", publication_id)
+            return
+
+
 async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
     publication_id = publication["id"]
     claimed = await claim_publication(publication_id)
@@ -92,6 +118,7 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
 
     attempt_count = int(claimed.get("attempt_count") or 1)
     processing_token = claimed["processing_token"]
+    heartbeat_task = asyncio.create_task(_lease_heartbeat(publication_id, processing_token))
     try:
         platform = claimed.get("channel_platform", "")
         publisher = registry.get(platform, bot=bot)
@@ -115,6 +142,12 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
                 logging.exception("Failed to persist failure for publication %s", publication_id)
         except Exception:
             logging.exception("Failed to persist failure for publication %s", publication_id)
+    finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
 
 
 async def publication_worker(bot: Bot) -> None:
