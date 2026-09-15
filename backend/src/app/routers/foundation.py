@@ -16,6 +16,10 @@ from src.app.publication_state import sync_content_status
 
 router = APIRouter()
 
+DEFAULT_LEASE_TIMEOUT_SECONDS = 900
+MIN_LEASE_TIMEOUT_SECONDS = 60
+MAX_LEASE_TIMEOUT_SECONDS = 86400
+
 
 class WorkspaceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
@@ -127,6 +131,19 @@ class PublicationFail(PublicationLease):
     retry: bool = True
     max_attempts: int = Field(5, ge=1, le=20)
     retry_delay_seconds: int = Field(60, ge=1, le=86400)
+
+
+def lease_timeout_seconds() -> int:
+    raw = os.environ.get("PUBLICATION_LEASE_TIMEOUT_SECONDS", str(DEFAULT_LEASE_TIMEOUT_SECONDS))
+    try:
+        value = int(raw)
+    except ValueError:
+        value = DEFAULT_LEASE_TIMEOUT_SECONDS
+    return max(MIN_LEASE_TIMEOUT_SECONDS, min(value, MAX_LEASE_TIMEOUT_SECONDS))
+
+
+def lease_cutoff(now: datetime) -> datetime:
+    return now - timedelta(seconds=lease_timeout_seconds())
 
 
 def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
@@ -263,9 +280,9 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     if content.status == "approved":
         transition_content(db, content, "scheduled")
     audit(db, content.workspace_id, "publication", publication.id, "scheduled")
-    publication_event("scheduled", publication.id, status=publication.status, attempt_count=publication.attempt_count)
     db.commit()
     db.refresh(publication)
+    publication_event("scheduled", publication.id, status=publication.status, attempt_count=publication.attempt_count)
     return publication
 
 
@@ -286,23 +303,22 @@ def list_publications(workspace_id: Optional[int] = None, db: Session = Depends(
 
 @router.post("/publications/recover-stale", response_model=List[PublicationOut], dependencies=[Depends(require_service_token)])
 def recover_stale_publications(stale_after_seconds: int = 900, db: Session = Depends(get_db)):
-    cutoff = datetime.utcnow() - timedelta(seconds=max(60, min(stale_after_seconds, 86400)))
-    stale = db.query(Publication).filter(Publication.status == "processing", Publication.lease_heartbeat_at.is_not(None), Publication.lease_heartbeat_at < cutoff).all()
-    for publication in stale:
-        publication.status = "scheduled"
-        publication.next_attempt_at = datetime.utcnow()
-        publication.processing_started_at = None
-        publication.processing_token = None
-        publication.lease_heartbeat_at = None
-        publication.worker_id = None
-        publication.error_message = "Recovered stale processing claim"
+    cutoff = datetime.utcnow() - timedelta(seconds=max(MIN_LEASE_TIMEOUT_SECONDS, min(stale_after_seconds, MAX_LEASE_TIMEOUT_SECONDS)))
+    stale_ids = [item.id for item in db.query(Publication.id).filter(Publication.status == "processing", or_(and_(Publication.lease_heartbeat_at.is_not(None), Publication.lease_heartbeat_at < cutoff), and_(Publication.lease_heartbeat_at.is_(None), Publication.processing_started_at.is_not(None), Publication.processing_started_at < cutoff))).all()]
+    recovered = []
+    for publication_id in stale_ids:
+        result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "processing", or_(and_(Publication.lease_heartbeat_at.is_not(None), Publication.lease_heartbeat_at < cutoff), and_(Publication.lease_heartbeat_at.is_(None), Publication.processing_started_at.is_not(None), Publication.processing_started_at < cutoff))).values(status="scheduled", next_attempt_at=datetime.utcnow(), processing_started_at=None, processing_token=None, lease_heartbeat_at=None, worker_id=None, error_message="Recovered stale processing claim").execution_options(synchronize_session=False))
+        if result.rowcount != 1:
+            continue
+        publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
         sync_content_status(db, publication.content)
-        publication_event("recovered", publication.id, status=publication.status, attempt_count=publication.attempt_count)
-    if stale:
+        recovered.append(publication)
+    if recovered:
         db.commit()
-        for publication in stale:
+        for publication in recovered:
             db.refresh(publication)
-    return stale
+            publication_event("recovered", publication.id, status=publication.status, attempt_count=publication.attempt_count)
+    return recovered
 
 
 @router.post("/publications/{publication_id}/claim", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
@@ -321,50 +337,55 @@ def claim_publication(publication_id: int, payload: PublicationClaim, db: Sessio
     if publication.content.status != "publishing":
         transition_content(db, publication.content, "publishing")
     response = PublicationOut.model_validate(publication)
-    publication_event("claimed", publication.id, status=publication.status, worker_id=publication.worker_id, attempt_count=publication.attempt_count)
+    event_data = (publication.id, publication.status, publication.worker_id, publication.attempt_count)
     db.commit()
+    publication_event("claimed", event_data[0], status=event_data[1], worker_id=event_data[2], attempt_count=event_data[3])
     return response
 
 
 @router.post("/publications/{publication_id}/heartbeat", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def heartbeat_publication(publication_id: int, payload: PublicationLease, db: Session = Depends(get_db)):
-    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id, Publication.processing_token == payload.processing_token).values(lease_heartbeat_at=datetime.utcnow()))
+    now = datetime.utcnow()
+    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id, Publication.processing_token == payload.processing_token, Publication.lease_heartbeat_at >= lease_cutoff(now)).values(lease_heartbeat_at=now).execution_options(synchronize_session=False))
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
-    publication_event("heartbeat", publication.id, status=publication.status, worker_id=publication.worker_id, attempt_count=publication.attempt_count)
+    event_data = (publication.id, publication.status, publication.worker_id, publication.attempt_count)
     db.commit()
+    publication_event("heartbeat", event_data[0], status=event_data[1], worker_id=event_data[2], attempt_count=event_data[3])
     return publication
 
 
 @router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def complete_publication(publication_id: int, payload: PublicationComplete, db: Session = Depends(get_db)):
     now = datetime.utcnow()
-    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id, Publication.processing_token == payload.processing_token).values(status="published", published_at=now, external_id=payload.external_id, processing_started_at=None, lease_heartbeat_at=None, next_attempt_at=None, worker_id=None, processing_token=None))
+    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id, Publication.processing_token == payload.processing_token, Publication.lease_heartbeat_at >= lease_cutoff(now)).values(status="published", published_at=now, external_id=payload.external_id, processing_started_at=None, lease_heartbeat_at=None, next_attempt_at=None, worker_id=None, processing_token=None).execution_options(synchronize_session=False))
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
     sync_content_status(db, publication.content)
     audit(db, publication.channel.workspace_id, "publication", publication.id, "published")
-    publication_event("completed", publication.id, status=publication.status, attempt_count=publication.attempt_count)
+    event_data = (publication.id, publication.status, publication.attempt_count)
     db.commit()
     db.refresh(publication)
+    publication_event("completed", event_data[0], status=event_data[1], attempt_count=event_data[2])
     return publication
 
 
 @router.post("/publications/{publication_id}/fail", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def fail_publication(publication_id: int, payload: PublicationFail, db: Session = Depends(get_db)):
+    now = datetime.utcnow()
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
     if not publication:
         raise HTTPException(404, "Publication not found")
-    if publication.status != "processing" or publication.worker_id != payload.worker_id or publication.processing_token != payload.processing_token:
+    if publication.status != "processing" or publication.worker_id != payload.worker_id or publication.processing_token != payload.processing_token or not publication.lease_heartbeat_at or publication.lease_heartbeat_at < lease_cutoff(now):
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
     publication.error_message = payload.error_message
     if payload.retry and publication.attempt_count < payload.max_attempts:
         publication.status = "scheduled"
-        publication.next_attempt_at = datetime.utcnow() + timedelta(seconds=payload.retry_delay_seconds)
+        publication.next_attempt_at = now + timedelta(seconds=payload.retry_delay_seconds)
     else:
         publication.status = "failed"
         publication.next_attempt_at = None
@@ -374,7 +395,9 @@ def fail_publication(publication_id: int, payload: PublicationFail, db: Session 
     publication.worker_id = None
     sync_content_status(db, publication.content)
     audit(db, publication.channel.workspace_id, "publication", publication.id, "failed")
-    publication_event("retry_scheduled" if publication.status == "scheduled" else "failed", publication.id, status=publication.status, attempt_count=publication.attempt_count, error=publication.error_message)
+    event_name = "retry_scheduled" if publication.status == "scheduled" else "failed"
+    event_data = (publication.id, publication.status, publication.attempt_count, publication.error_message)
     db.commit()
     db.refresh(publication)
+    publication_event(event_name, event_data[0], status=event_data[1], attempt_count=event_data[2], error=event_data[3])
     return publication
