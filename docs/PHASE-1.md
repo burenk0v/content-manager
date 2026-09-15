@@ -12,8 +12,10 @@ Phase 1 establishes the persistence and delivery foundation for the future AI-na
   - `ContentVersion`
   - `Publication`
   - `AuditLog`
+- Added an explicit `Content` state machine: `draft -> review -> approved -> scheduled -> publishing -> published -> archived`, with controlled recovery paths through `draft` / `failed`.
+- Added API endpoints to inspect allowed content transitions and perform a validated state transition.
 - Kept the existing Topic / Prompt / Schedule / PostDraft model intact for backward compatibility.
-- Added a migration that can create the existing schema on a fresh database and add the legacy columns required by current deployments.
+- Added migrations that can create the existing schema on a fresh database and add the lifecycle metadata required by current deployments.
 - Added backend and Telegram worker tests plus GitHub Actions CI.
 - Added `/health` for container health checks.
 - Wired `SERVICE_ACCOUNT_TOKEN` into the backend container.
@@ -26,6 +28,19 @@ Phase 1 establishes the persistence and delivery foundation for the future AI-na
 `Content` is the canonical editorial object. A `ContentVersion` records every meaningful body revision. A `Publication` represents a delivery of content to one channel, so one piece of content can be published to multiple destinations without duplicating editorial data.
 
 `Workspace` is the future tenancy boundary. `Channel` represents a concrete external destination such as a Telegram channel. `AuditLog` provides the foundation for traceability of human and AI actions.
+
+## Content state machine
+
+The state machine is intentionally explicit rather than allowing arbitrary string updates:
+
+```text
+draft -> review -> approved -> scheduled -> publishing -> published -> archived
+  ^       |          |            |             |
+  |       +----------+------------+             +-> failed -> scheduled
+  +-----------------------------------------------+       
+```
+
+The API rejects invalid transitions with `409 Conflict`. This creates a stable contract for future Django UI, AI approval flows and provider workers.
 
 ## Publication delivery semantics
 
@@ -45,7 +60,7 @@ alembic upgrade head
 
 before starting Uvicorn.
 
-For an existing database created by a pre-Alembic version, back up the database before deploying Phase 1. The `0001_phase1_foundation` migration is designed to preserve existing tables and add missing legacy columns, then create the Phase 1 tables.
+For an existing database created by a pre-Alembic version, back up the database before deploying Phase 1. The foundation migrations preserve existing tables and add the Phase 1/lifecycle schema incrementally.
 
 To run migrations manually from the backend directory:
 
@@ -68,19 +83,16 @@ From `telegram/`:
 
 ```bash
 pip install -r src/requirements.txt pytest pytest-asyncio
-PYTHONPATH=. pytest -q
+PYTHONPATH=src:. pytest -q
 python -m compileall -q src
 ```
 
-## Next Phase 1 increments
+## Next implementation increments
 
-The next implementation increments should add:
-
-1. authenticated Workspace / Channel CRUD;
-2. API endpoints for Content and ContentVersion;
-3. stronger retry policy with exponential backoff and jitter;
-4. migration tests for legacy database -> Phase 1 -> head;
-5. provider adapter boundaries so Telegram delivery is isolated from the publication domain;
-6. structured audit events around generation, editing, approval and publication.
+1. connect publication worker transitions to the same content state machine (`scheduled -> publishing -> published/failed`);
+2. introduce provider adapter boundaries so Telegram delivery is isolated from the publication domain;
+3. make `ContentVersion` the canonical write path for human and AI edits;
+4. add structured audit events for generation, editing, approval and publication;
+5. replace service-token-only lifecycle endpoints with authenticated workspace-scoped API access.
 
 AI strategy, content repurposing, multi-platform adapters and analytics remain Phase 2/3 concerns.
