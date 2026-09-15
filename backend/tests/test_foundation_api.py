@@ -69,6 +69,41 @@ def test_content_lifecycle_and_idempotent_publication():
     assert second.json()["id"] == publication["id"]
 
 
+def test_scheduled_content_can_add_second_channel():
+    publication = create_publication()
+    content_id = publication["content_id"]
+    workspace_id = client.get("/content/contents", headers=HEADERS).json()[-1]["workspace_id"]
+    suffix = uuid.uuid4().hex[:8]
+    channel = client.post("/content/channels", json={"workspace_id": workspace_id, "platform": "telegram", "external_id": f"@second_{suffix}"}, headers=HEADERS)
+    assert channel.status_code == 201
+    second = client.post("/content/publications", json={"content_id": content_id, "channel_id": channel.json()["id"], "idempotency_key": f"second-{suffix}"}, headers=HEADERS)
+    assert second.status_code == 201
+    assert second.json()["content_id"] == content_id
+    assert second.json()["channel_id"] == channel.json()["id"]
+    assert client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS).json()["status"] == "scheduled"
+
+
+def test_publication_rejects_cross_workspace_channel():
+    first = create_publication()
+    suffix = uuid.uuid4().hex[:8]
+    other_workspace = client.post("/content/workspaces", json={"name": f"Other {suffix}", "slug": f"other-{suffix}"}, headers=HEADERS).json()
+    other_channel = client.post("/content/channels", json={"workspace_id": other_workspace["id"], "platform": "telegram", "external_id": f"@other_{suffix}"}, headers=HEADERS).json()
+    response = client.post("/content/publications", json={"content_id": first["content_id"], "channel_id": other_channel["id"], "idempotency_key": f"cross-{suffix}"}, headers=HEADERS)
+    assert response.status_code == 400
+
+
+def test_published_content_cannot_add_publication():
+    publication = create_publication()
+    publication_id = publication["id"]
+    assert client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "worker-a"}, headers=HEADERS).status_code == 200
+    assert client.post(f"/content/publications/{publication_id}/complete", json={"worker_id": "worker-a", "external_id": "tg-1"}, headers=HEADERS).status_code == 200
+    suffix = uuid.uuid4().hex[:8]
+    workspace_id = client.get("/content/contents", headers=HEADERS).json()[-1]["workspace_id"]
+    channel = client.post("/content/channels", json={"workspace_id": workspace_id, "platform": "telegram", "external_id": f"@late_{suffix}"}, headers=HEADERS).json()
+    response = client.post("/content/publications", json={"content_id": publication["content_id"], "channel_id": channel["id"], "idempotency_key": f"late-{suffix}"}, headers=HEADERS)
+    assert response.status_code == 409
+
+
 def test_publication_ready_respects_schedule_and_active_channel():
     future = (datetime.utcnow() + timedelta(minutes=30)).isoformat()
     publication = create_publication(scheduled_at=future)
