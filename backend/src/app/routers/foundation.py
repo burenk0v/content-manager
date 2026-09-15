@@ -257,7 +257,11 @@ def create_publication_from_draft(draft_id: int, db: Session = Depends(get_db)):
         idempotency_key=key,
     )
     db.add(publication); db.flush()
-    draft.status = "scheduled"
+
+    # Keep the legacy draft in its existing publishable state until the new
+    # publication worker confirms delivery. The legacy API only accepts
+    # pending/rejected/published, so writing "scheduled" or "failed" here
+    # would create an incompatible state for existing clients.
     audit(db, workspace.id, "content", content.id, "scheduled")
     audit(db, workspace.id, "publication", publication.id, "scheduled")
     db.commit(); db.refresh(publication)
@@ -376,10 +380,6 @@ def fail_publication(publication_id: int, payload: PublicationFail, db: Session 
         publication.next_attempt_at = None
         publication.processing_started_at = None
         publication.content.status = "failed"
-        if publication.source_draft_id:
-            draft = db.query(PostDraft).filter(PostDraft.id == publication.source_draft_id).first()
-            if draft:
-                draft.status = "failed"
         action = "failed"
     publication.error_message = payload.error_message
     publication.worker_id = None
