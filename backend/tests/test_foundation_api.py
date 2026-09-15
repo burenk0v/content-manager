@@ -1,4 +1,5 @@
 import os
+import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -8,13 +9,19 @@ os.environ["SERVICE_ACCOUNT_TOKEN"] = "test-token"
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 
 from src.app.db import Base, get_db
 from src.app.main import app
 from src.app.models import Publication
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+_fd, _db_path = tempfile.mkstemp(prefix="content_manager_test_", suffix=".sqlite3")
+os.close(_fd)
+engine = create_engine(
+    f"sqlite:///{_db_path}",
+    connect_args={"check_same_thread": False, "timeout": 30},
+    poolclass=NullPool,
+)
 TestingSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base.metadata.create_all(bind=engine)
 
