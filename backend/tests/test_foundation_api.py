@@ -69,6 +69,13 @@ def test_content_lifecycle_and_idempotent_publication():
     assert second.json()["id"] == publication["id"]
 
 
+def test_duplicate_content_channel_is_rejected_even_with_new_idempotency_key():
+    publication = create_publication()
+    response = client.post("/content/publications", json={"content_id": publication["content_id"], "channel_id": publication["channel_id"], "idempotency_key": f"different-{uuid.uuid4().hex}"}, headers=HEADERS)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Publication already exists for this content and channel"
+
+
 def test_scheduled_content_can_add_second_channel():
     publication = create_publication()
     content_id = publication["content_id"]
@@ -81,6 +88,25 @@ def test_scheduled_content_can_add_second_channel():
     assert second.json()["content_id"] == content_id
     assert second.json()["channel_id"] == channel.json()["id"]
     assert client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS).json()["status"] == "scheduled"
+
+
+def test_multi_channel_content_publishes_only_after_all_channels_complete():
+    first = create_publication()
+    content_id = first["content_id"]
+    workspace_id = client.get("/content/contents", headers=HEADERS).json()[-1]["workspace_id"]
+    suffix = uuid.uuid4().hex[:8]
+    second_channel = client.post("/content/channels", json={"workspace_id": workspace_id, "platform": "telegram", "external_id": f"@multi_{suffix}"}, headers=HEADERS).json()
+    second = client.post("/content/publications", json={"content_id": content_id, "channel_id": second_channel["id"], "idempotency_key": f"multi-{suffix}"}, headers=HEADERS).json()
+
+    assert client.post(f"/content/publications/{first['id']}/claim", json={"worker_id": "worker-a"}, headers=HEADERS).status_code == 200
+    assert client.post(f"/content/publications/{first['id']}/complete", json={"worker_id": "worker-a", "external_id": "tg-a"}, headers=HEADERS).status_code == 200
+    assert client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS).json()["status"] == "scheduled"
+
+    assert client.post(f"/content/publications/{second['id']}/claim", json={"worker_id": "worker-b"}, headers=HEADERS).status_code == 200
+    assert client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS).json()["status"] == "publishing"
+    completed = client.post(f"/content/publications/{second['id']}/complete", json={"worker_id": "worker-b", "external_id": "tg-b"}, headers=HEADERS)
+    assert completed.status_code == 200
+    assert client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS).json()["status"] == "published"
 
 
 def test_publication_rejects_cross_workspace_channel():
