@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import random
 import socket
 from typing import Any
 
@@ -15,6 +16,8 @@ WORKER_ID = os.getenv("PUBLICATION_WORKER_ID") or f"telegram:{socket.gethostname
 POLL_INTERVAL_SECONDS = int(os.getenv("PUBLICATION_POLL_INTERVAL_SECONDS", "5"))
 MAX_ATTEMPTS = int(os.getenv("PUBLICATION_MAX_ATTEMPTS", "5"))
 RETRY_DELAY_SECONDS = int(os.getenv("PUBLICATION_RETRY_DELAY_SECONDS", "60"))
+RETRY_MAX_DELAY_SECONDS = int(os.getenv("PUBLICATION_RETRY_MAX_DELAY_SECONDS", "3600"))
+RETRY_JITTER_RATIO = float(os.getenv("PUBLICATION_RETRY_JITTER_RATIO", "0.25"))
 
 
 def backend_url(path: str) -> str:
@@ -54,7 +57,20 @@ async def complete_publication(publication_id: int, external_id: str) -> None:
     response.raise_for_status()
 
 
-async def fail_publication(publication_id: int, error_message: str) -> None:
+def calculate_retry_delay(attempt_count: int) -> int:
+    """Exponential backoff with bounded symmetric jitter.
+
+    attempt_count is the number of the attempt that just failed. The delay is
+    capped before jitter, then jitter is clamped to the configured maximum.
+    """
+    exponent = max(0, attempt_count - 1)
+    base_delay = min(RETRY_MAX_DELAY_SECONDS, RETRY_DELAY_SECONDS * (2**exponent))
+    jitter = base_delay * max(0.0, min(RETRY_JITTER_RATIO, 1.0))
+    delay = base_delay + random.uniform(-jitter, jitter)
+    return max(1, min(RETRY_MAX_DELAY_SECONDS, round(delay)))
+
+
+async def fail_publication(publication_id: int, error_message: str, attempt_count: int) -> None:
     response = await backend_request(
         "POST",
         f"/content/publications/{publication_id}/fail",
@@ -63,7 +79,7 @@ async def fail_publication(publication_id: int, error_message: str) -> None:
             "error_message": error_message[:4000],
             "retry": True,
             "max_attempts": MAX_ATTEMPTS,
-            "retry_delay_seconds": RETRY_DELAY_SECONDS,
+            "retry_delay_seconds": calculate_retry_delay(attempt_count),
         },
     )
     response.raise_for_status()
@@ -80,6 +96,7 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
     if not claimed:
         return
 
+    attempt_count = int(claimed.get("attempt_count") or 1)
     try:
         platform = claimed.get("channel_platform")
         if platform not in {None, "telegram"}:
@@ -109,7 +126,7 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
     except Exception as exc:
         logging.exception("Publication %s failed", publication_id)
         try:
-            await fail_publication(publication_id, str(exc))
+            await fail_publication(publication_id, str(exc), attempt_count)
         except Exception:
             logging.exception("Failed to persist failure for publication %s", publication_id)
 
