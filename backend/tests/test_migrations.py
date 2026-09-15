@@ -30,15 +30,16 @@ def test_legacy_schema_migrates_to_phase1_head(tmp_path, monkeypatch):
     assert {"prompt_id", "assistant_template_id", "timezone", "force_run_requested_at"} <= schedule_columns
 
     publication_columns = {column["name"] for column in inspector.get_columns("publications")}
-    assert {"source_draft_id", "processing_started_at", "next_attempt_at", "attempt_count", "worker_id"} <= publication_columns
+    assert {"source_draft_id", "processing_started_at", "processing_token", "next_attempt_at", "attempt_count", "worker_id"} <= publication_columns
     publication_indexes = {index["name"]: index for index in inspector.get_indexes("publications")}
     assert "uq_publications_content_channel" in publication_indexes
     assert publication_indexes["uq_publications_content_channel"]["unique"] is True
     assert publication_indexes["uq_publications_content_channel"]["column_names"] == ["content_id", "channel_id"]
+    assert "ix_publications_processing_token" in publication_indexes
 
     content_columns = {column["name"] for column in inspector.get_columns("contents")}
     assert "status" in content_columns
 
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert version == "0005_publication_content_channel_unique"
+    assert version == "0006_publication_processing_lease"
