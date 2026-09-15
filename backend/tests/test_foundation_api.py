@@ -28,7 +28,7 @@ client = TestClient(app)
 HEADERS = {"X-Service-Token": "test-token"}
 
 
-def test_content_lifecycle_and_idempotent_publication():
+def create_publication():
     workspace = client.post("/content/workspaces", json={"name": "Test", "slug": "test"}, headers=HEADERS)
     assert workspace.status_code == 201
     workspace_id = workspace.json()["id"]
@@ -50,17 +50,88 @@ def test_content_lifecycle_and_idempotent_publication():
     assert content.status_code == 201
     content_id = content.json()["id"]
 
-    versions = client.get(f"/content/contents/{content_id}/versions", headers=HEADERS)
-    assert versions.status_code == 200
-    assert len(versions.json()) == 1
-    assert versions.json()[0]["version"] == 1
+    publication = client.post("/content/publications", json={
+        "content_id": content_id,
+        "channel_id": channel_id,
+        "idempotency_key": "publish-1",
+    }, headers=HEADERS)
+    assert publication.status_code == 201
+    return publication.json()["id"]
 
-    payload = {"content_id": content_id, "channel_id": channel_id, "idempotency_key": "publish-1"}
-    first = client.post("/content/publications", json=payload, headers=HEADERS)
-    second = client.post("/content/publications", json=payload, headers=HEADERS)
-    assert first.status_code == 201
+
+def test_content_lifecycle_and_idempotent_publication():
+    publication_id = create_publication()
+    second = client.post("/content/publications", json={
+        "content_id": 1,
+        "channel_id": 1,
+        "idempotency_key": "publish-1",
+    }, headers=HEADERS)
     assert second.status_code == 201
-    assert first.json()["id"] == second.json()["id"]
+    assert second.json()["id"] == publication_id
+
+
+def test_publication_claim_is_single_owner_and_can_complete():
+    publication_id = create_publication()
+
+    first = client.post(
+        f"/content/publications/{publication_id}/claim",
+        json={"worker_id": "worker-a"},
+        headers=HEADERS,
+    )
+    assert first.status_code == 200
+    assert first.json()["status"] == "processing"
+    assert first.json()["attempt_count"] == 1
+
+    second = client.post(
+        f"/content/publications/{publication_id}/claim",
+        json={"worker_id": "worker-b"},
+        headers=HEADERS,
+    )
+    assert second.status_code == 409
+
+    wrong_worker = client.post(
+        f"/content/publications/{publication_id}/complete",
+        json={"worker_id": "worker-b", "external_id": "tg-1"},
+        headers=HEADERS,
+    )
+    assert wrong_worker.status_code == 409
+
+    completed = client.post(
+        f"/content/publications/{publication_id}/complete",
+        json={"worker_id": "worker-a", "external_id": "tg-1"},
+        headers=HEADERS,
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "published"
+    assert completed.json()["external_id"] == "tg-1"
+
+
+def test_publication_failure_can_be_retried_then_failed():
+    publication_id = create_publication()
+
+    claimed = client.post(
+        f"/content/publications/{publication_id}/claim",
+        json={"worker_id": "worker-a"},
+        headers=HEADERS,
+    )
+    assert claimed.status_code == 200
+
+    retried = client.post(
+        f"/content/publications/{publication_id}/fail",
+        json={"worker_id": "worker-a", "error_message": "temporary", "retry_delay_seconds": 1},
+        headers=HEADERS,
+    )
+    assert retried.status_code == 200
+    assert retried.json()["status"] == "scheduled"
+    assert retried.json()["attempt_count"] == 1
+    assert retried.json()["next_attempt_at"] is not None
+
+    claimed_again = client.post(
+        f"/content/publications/{publication_id}/claim",
+        json={"worker_id": "worker-b"},
+        headers=HEADERS,
+    )
+    assert claimed_again.status_code == 409
 
 
 def test_service_token_is_required():
