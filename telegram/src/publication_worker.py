@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import random
 import socket
 from typing import Any
 
@@ -14,10 +13,6 @@ BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
 WORKER_ID = os.getenv("PUBLICATION_WORKER_ID") or f"telegram:{socket.gethostname()}"
 POLL_INTERVAL_SECONDS = int(os.getenv("PUBLICATION_POLL_INTERVAL_SECONDS", "5"))
-MAX_ATTEMPTS = int(os.getenv("PUBLICATION_MAX_ATTEMPTS", "5"))
-RETRY_DELAY_SECONDS = int(os.getenv("PUBLICATION_RETRY_DELAY_SECONDS", "60"))
-RETRY_MAX_DELAY_SECONDS = int(os.getenv("PUBLICATION_RETRY_MAX_DELAY_SECONDS", "3600"))
-RETRY_JITTER_RATIO = float(os.getenv("PUBLICATION_RETRY_JITTER_RATIO", "0.25"))
 LEASE_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("PUBLICATION_LEASE_HEARTBEAT_INTERVAL_SECONDS", "60"))
 
 
@@ -66,14 +61,7 @@ async def complete_publication(publication_id: int, external_id: str, processing
     response.raise_for_status()
 
 
-def calculate_retry_delay(attempt_count: int) -> int:
-    exponent = max(0, attempt_count - 1)
-    base_delay = min(RETRY_MAX_DELAY_SECONDS, RETRY_DELAY_SECONDS * (2**exponent))
-    jitter = base_delay * max(0.0, min(RETRY_JITTER_RATIO, 1.0))
-    return max(1, min(RETRY_MAX_DELAY_SECONDS, round(base_delay + random.uniform(-jitter, jitter))))
-
-
-async def fail_publication(publication_id: int, error_message: str, attempt_count: int, processing_token: str) -> None:
+async def fail_publication(publication_id: int, error_message: str, processing_token: str) -> None:
     response = await backend_request(
         "POST",
         f"/content/publications/{publication_id}/fail",
@@ -82,8 +70,6 @@ async def fail_publication(publication_id: int, error_message: str, attempt_coun
             "processing_token": processing_token,
             "error_message": error_message[:4000],
             "retry": True,
-            "max_attempts": MAX_ATTEMPTS,
-            "retry_delay_seconds": calculate_retry_delay(attempt_count),
         },
     )
     response.raise_for_status()
@@ -116,7 +102,6 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
     if not claimed:
         return
 
-    attempt_count = int(claimed.get("attempt_count") or 1)
     processing_token = claimed["processing_token"]
     heartbeat_task = asyncio.create_task(_lease_heartbeat(publication_id, processing_token))
     try:
@@ -134,7 +119,7 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
     except Exception as exc:
         logging.exception("Publication %s failed", publication_id)
         try:
-            await fail_publication(publication_id, str(exc), attempt_count, processing_token)
+            await fail_publication(publication_id, str(exc), processing_token)
         except httpx.HTTPStatusError as persist_exc:
             if persist_exc.response.status_code == 409:
                 logging.warning("Publication %s lease was lost before failure could be persisted", publication_id)
