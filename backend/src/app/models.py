@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .db import Base
@@ -147,6 +147,7 @@ class Publication(Base):
     idempotency_key = Column(String, unique=True, nullable=False)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (Index('uq_publications_content_channel', 'content_id', 'channel_id', unique=True),)
     content = relationship('Content', back_populates='publications')
     channel = relationship('Channel', back_populates='publications')
     source_draft = relationship('PostDraft')
