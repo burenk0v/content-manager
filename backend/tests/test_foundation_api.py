@@ -284,3 +284,61 @@ def test_stale_processing_claim_can_be_recovered():
 def test_service_token_is_required():
     response = client.get("/content/workspaces")
     assert response.status_code == 401
+
+
+def test_expired_lease_cannot_be_renewed():
+    publication = create_publication()
+    claimed = client.post(f"/content/publications/{publication['id']}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
+    assert claimed.status_code == 200
+    token = claimed.json()["processing_token"]
+
+    db = TestingSession()
+    try:
+        item = db.query(Publication).filter(Publication.id == publication["id"]).one()
+        expired_at = datetime.utcnow() - timedelta(hours=1)
+        item.lease_heartbeat_at = expired_at
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(f"/content/publications/{publication['id']}/heartbeat", json={"worker_id": "worker-a", "processing_token": token}, headers=HEADERS)
+    assert response.status_code == 409
+
+
+def test_expired_lease_cannot_complete_without_recovery():
+    publication = create_publication()
+    claimed = client.post(f"/content/publications/{publication['id']}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
+    assert claimed.status_code == 200
+    token = claimed.json()["processing_token"]
+
+    db = TestingSession()
+    try:
+        item = db.query(Publication).filter(Publication.id == publication["id"]).one()
+        expired_at = datetime.utcnow() - timedelta(hours=1)
+        item.lease_heartbeat_at = expired_at
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(f"/content/publications/{publication['id']}/complete", json={"worker_id": "worker-a", "processing_token": token, "external_id": "late"}, headers=HEADERS)
+    assert response.status_code == 409
+
+
+def test_stale_recovery_handles_missing_heartbeat():
+    publication = create_publication()
+    claimed = client.post(f"/content/publications/{publication['id']}/claim", json={"worker_id": "dead-worker"}, headers=HEADERS)
+    assert claimed.status_code == 200
+
+    db = TestingSession()
+    try:
+        item = db.query(Publication).filter(Publication.id == publication["id"]).one()
+        item.processing_started_at = datetime.utcnow() - timedelta(hours=1)
+        item.lease_heartbeat_at = None
+        db.commit()
+    finally:
+        db.close()
+
+    recovered = client.post("/content/publications/recover-stale?stale_after_seconds=60", headers=HEADERS)
+    assert recovered.status_code == 200
+    item = next(item for item in recovered.json() if item["id"] == publication["id"])
+    assert item["status"] == "scheduled"
