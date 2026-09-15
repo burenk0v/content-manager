@@ -5,6 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 os.environ["SERVICE_ACCOUNT_TOKEN"] = "test-token"
+os.environ["PUBLICATION_RETRY_DELAY_SECONDS"] = "60"
+os.environ["PUBLICATION_RETRY_MAX_DELAY_SECONDS"] = "3600"
+os.environ["PUBLICATION_MAX_ATTEMPTS"] = "5"
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -14,6 +17,7 @@ from sqlalchemy.pool import NullPool
 from src.app.db import Base, get_db
 from src.app.main import app
 from src.app.models import Publication
+from src.app.routers.foundation import retry_delay_seconds, retry_max_attempts
 
 _fd, _db_path = tempfile.mkstemp(prefix="content_manager_test_", suffix=".sqlite3")
 os.close(_fd)
@@ -173,11 +177,7 @@ def test_concurrent_claims_allow_exactly_one_worker_to_acquire_lease():
 
     def claim(worker_id):
         with TestClient(app) as worker_client:
-            response = worker_client.post(
-                f"/content/publications/{publication_id}/claim",
-                json={"worker_id": worker_id},
-                headers=HEADERS,
-            )
+            response = worker_client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": worker_id}, headers=HEADERS)
             return response.status_code, response.json()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -236,7 +236,7 @@ def test_old_processing_token_cannot_complete_after_stale_recovery():
     finally:
         db.close()
 
-    recovered = client.post("/content/publications/recover-stale?stale_after_seconds=60", headers=HEADERS)
+    recovered = client.post("/content/publications/recover-stale", headers=HEADERS)
     assert recovered.status_code == 200
     item = next(item for item in recovered.json() if item["id"] == publication_id)
     assert item["status"] == "scheduled" and item["processing_token"] is None and item["lease_heartbeat_at"] is None
@@ -249,16 +249,33 @@ def test_old_processing_token_cannot_complete_after_stale_recovery():
     assert re_claimed.json()["processing_token"] != old_token
 
 
-def test_publication_failure_can_be_retried_then_failed():
+def test_publication_failure_uses_backend_retry_policy():
     publication = create_publication(); publication_id = publication["id"]
     claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
     assert claimed.status_code == 200
     token = claimed.json()["processing_token"]
-    retried = client.post(f"/content/publications/{publication_id}/fail", json={"worker_id": "worker-a", "processing_token": token, "error_message": "temporary", "retry_delay_seconds": 1}, headers=HEADERS)
+    retried = client.post(f"/content/publications/{publication_id}/fail", json={"worker_id": "worker-a", "processing_token": token, "error_message": "temporary", "retry": True}, headers=HEADERS)
     assert retried.status_code == 200 and retried.json()["status"] == "scheduled"
     assert retried.json()["attempt_count"] == 1 and retried.json()["next_attempt_at"] is not None
     assert retried.json()["processing_token"] is None and retried.json()["lease_heartbeat_at"] is None
     assert client.get(f"/content/contents/{publication['content_id']}/transitions", headers=HEADERS).json()["status"] == "scheduled"
+    assert retry_delay_seconds(1) == 60
+    assert retry_delay_seconds(2) == 120
+    assert retry_delay_seconds(10) == 3600
+    assert retry_max_attempts() == 5
+
+
+def test_publication_failure_stops_at_backend_max_attempts():
+    publication_id = create_publication()["id"]
+    for expected_attempt in range(1, 6):
+        claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": f"worker-{expected_attempt}"}, headers=HEADERS)
+        assert claimed.status_code == 200
+        token = claimed.json()["processing_token"]
+        failed = client.post(f"/content/publications/{publication_id}/fail", json={"worker_id": f"worker-{expected_attempt}", "processing_token": token, "error_message": "permanent", "retry": True}, headers=HEADERS)
+        assert failed.status_code == 200
+        expected_status = "scheduled" if expected_attempt < 5 else "failed"
+        assert failed.json()["status"] == expected_status
+        assert failed.json()["attempt_count"] == expected_attempt
 
 
 def test_stale_processing_claim_can_be_recovered():
@@ -274,7 +291,7 @@ def test_stale_processing_claim_can_be_recovered():
         db.commit()
     finally:
         db.close()
-    recovered = client.post("/content/publications/recover-stale?stale_after_seconds=60", headers=HEADERS)
+    recovered = client.post("/content/publications/recover-stale", headers=HEADERS)
     assert recovered.status_code == 200
     item = next(item for item in recovered.json() if item["id"] == publication_id)
     assert item["status"] == "scheduled" and item["worker_id"] is None and item["processing_started_at"] is None and item["processing_token"] is None and item["lease_heartbeat_at"] is None
@@ -295,8 +312,7 @@ def test_expired_lease_cannot_be_renewed():
     db = TestingSession()
     try:
         item = db.query(Publication).filter(Publication.id == publication["id"]).one()
-        expired_at = datetime.utcnow() - timedelta(hours=1)
-        item.lease_heartbeat_at = expired_at
+        item.lease_heartbeat_at = datetime.utcnow() - timedelta(hours=1)
         db.commit()
     finally:
         db.close()
@@ -314,8 +330,7 @@ def test_expired_lease_cannot_complete_without_recovery():
     db = TestingSession()
     try:
         item = db.query(Publication).filter(Publication.id == publication["id"]).one()
-        expired_at = datetime.utcnow() - timedelta(hours=1)
-        item.lease_heartbeat_at = expired_at
+        item.lease_heartbeat_at = datetime.utcnow() - timedelta(hours=1)
         db.commit()
     finally:
         db.close()
@@ -338,7 +353,7 @@ def test_stale_recovery_handles_missing_heartbeat():
     finally:
         db.close()
 
-    recovered = client.post("/content/publications/recover-stale?stale_after_seconds=60", headers=HEADERS)
+    recovered = client.post("/content/publications/recover-stale", headers=HEADERS)
     assert recovered.status_code == 200
     item = next(item for item in recovered.json() if item["id"] == publication["id"])
     assert item["status"] == "scheduled"
