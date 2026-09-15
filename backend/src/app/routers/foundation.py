@@ -8,7 +8,7 @@ from sqlalchemy import and_, or_, update
 from sqlalchemy.orm import Session
 
 from src.app.db import get_db
-from src.app.models import AuditLog, Channel, Content, ContentVersion, Publication, Workspace
+from src.app.models import AuditLog, Channel, Content, ContentVersion, PostDraft, Publication, PublicationSchedule, Workspace
 
 router = APIRouter()
 
@@ -79,6 +79,7 @@ class PublicationOut(BaseModel):
     id: int
     content_id: int
     channel_id: int
+    source_draft_id: Optional[int]
     status: str
     scheduled_at: Optional[datetime]
     published_at: Optional[datetime]
@@ -92,6 +93,11 @@ class PublicationOut(BaseModel):
     created_at: datetime
     class Config:
         orm_mode = True
+
+class PublicationReadyOut(PublicationOut):
+    content_body: str
+    channel_platform: str
+    channel_external_id: str
 
 class PublicationClaim(BaseModel):
     worker_id: str = Field(..., min_length=1, max_length=200)
@@ -116,6 +122,29 @@ def require_service_token(x_service_token: Optional[str] = Header(None)) -> None
 
 def audit(db: Session, workspace_id: int, entity_type: str, entity_id: int, action: str) -> None:
     db.add(AuditLog(workspace_id=workspace_id, entity_type=entity_type, entity_id=entity_id, action=action))
+
+
+def publication_ready_out(publication: Publication) -> PublicationReadyOut:
+    return PublicationReadyOut(
+        id=publication.id,
+        content_id=publication.content_id,
+        channel_id=publication.channel_id,
+        source_draft_id=publication.source_draft_id,
+        status=publication.status,
+        scheduled_at=publication.scheduled_at,
+        published_at=publication.published_at,
+        processing_started_at=publication.processing_started_at,
+        next_attempt_at=publication.next_attempt_at,
+        attempt_count=publication.attempt_count,
+        worker_id=publication.worker_id,
+        external_id=publication.external_id,
+        idempotency_key=publication.idempotency_key,
+        error_message=publication.error_message,
+        created_at=publication.created_at,
+        content_body=publication.content.body,
+        channel_platform=publication.channel.platform,
+        channel_external_id=publication.channel.external_id,
+    )
 
 
 @router.post("/workspaces", response_model=WorkspaceOut, status_code=201, dependencies=[Depends(require_service_token)])
@@ -172,6 +201,68 @@ def list_content_versions(content_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Content not found")
     return db.query(ContentVersion).filter(ContentVersion.content_id == content_id).order_by(ContentVersion.version.desc()).all()
 
+@router.post("/publications/from-draft/{draft_id}", response_model=PublicationOut, status_code=201, dependencies=[Depends(require_service_token)])
+def create_publication_from_draft(draft_id: int, db: Session = Depends(get_db)):
+    draft = db.query(PostDraft).filter(PostDraft.id == draft_id).first()
+    if not draft:
+        raise HTTPException(404, "Draft not found")
+    if draft.status not in {"pending", "scheduled"}:
+        existing = db.query(Publication).filter(Publication.source_draft_id == draft_id).first()
+        if existing:
+            return existing
+        raise HTTPException(409, "Draft is not publishable")
+
+    schedule = db.query(PublicationSchedule).filter(PublicationSchedule.id == draft.schedule_id).first()
+    if not schedule:
+        raise HTTPException(404, "Schedule not found")
+
+    key = f"draft:{draft.id}:publication"
+    existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
+    if existing:
+        return existing
+
+    workspace = db.query(Workspace).filter(Workspace.slug == "telegram-default").first()
+    if not workspace:
+        workspace = Workspace(name="Telegram", slug="telegram-default")
+        db.add(workspace); db.flush()
+        audit(db, workspace.id, "workspace", workspace.id, "created")
+
+    channel = db.query(Channel).filter(Channel.platform == "telegram", Channel.external_id == schedule.chat_id).first()
+    if not channel:
+        channel = Channel(
+            workspace_id=workspace.id,
+            platform="telegram",
+            external_id=schedule.chat_id,
+            name=schedule.chat_name,
+            timezone=schedule.timezone or "UTC",
+        )
+        db.add(channel); db.flush()
+        audit(db, workspace.id, "channel", channel.id, "created")
+
+    content = Content(
+        workspace_id=workspace.id,
+        title=draft.topic_name,
+        body=draft.generated_text,
+        language=draft.language,
+        status="scheduled",
+    )
+    db.add(content); db.flush()
+    db.add(ContentVersion(content_id=content.id, version=1, body=draft.generated_text, source="ai", created_by=None))
+
+    publication = Publication(
+        content_id=content.id,
+        channel_id=channel.id,
+        source_draft_id=draft.id,
+        status="scheduled",
+        idempotency_key=key,
+    )
+    db.add(publication); db.flush()
+    draft.status = "scheduled"
+    audit(db, workspace.id, "content", content.id, "scheduled")
+    audit(db, workspace.id, "publication", publication.id, "scheduled")
+    db.commit(); db.refresh(publication)
+    return publication
+
 @router.post("/publications", response_model=PublicationOut, status_code=201, dependencies=[Depends(require_service_token)])
 def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)):
     content = db.query(Content).filter(Content.id == payload.content_id).first()
@@ -187,6 +278,17 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     audit(db, content.workspace_id, "publication", publication.id, "scheduled")
     db.commit(); db.refresh(publication)
     return publication
+
+@router.get("/publications/ready", response_model=List[PublicationReadyOut], dependencies=[Depends(require_service_token)])
+def list_ready_publications(limit: int = 20, db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    query = db.query(Publication).join(Content).join(Channel).filter(
+        Publication.status == "scheduled",
+        or_(Publication.scheduled_at.is_(None), Publication.scheduled_at <= now),
+        or_(Publication.next_attempt_at.is_(None), Publication.next_attempt_at <= now),
+        Channel.is_active.is_(True),
+    ).order_by(Publication.id.asc()).limit(max(1, min(limit, 100)))
+    return [publication_ready_out(publication) for publication in query.all()]
 
 @router.get("/publications", response_model=List[PublicationOut], dependencies=[Depends(require_service_token)])
 def list_publications(workspace_id: Optional[int] = None, db: Session = Depends(get_db)):
@@ -248,6 +350,11 @@ def complete_publication(publication_id: int, payload: PublicationComplete, db: 
         raise HTTPException(409, "Publication is not owned by this worker")
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
     channel = db.query(Channel).filter(Channel.id == publication.channel_id).first()
+    publication.content.status = "published"
+    if publication.source_draft_id:
+        draft = db.query(PostDraft).filter(PostDraft.id == publication.source_draft_id).first()
+        if draft:
+            draft.status = "published"
     audit(db, channel.workspace_id, "publication", publication.id, "published")
     db.commit(); db.refresh(publication)
     return publication
@@ -268,6 +375,11 @@ def fail_publication(publication_id: int, payload: PublicationFail, db: Session 
         publication.status = "failed"
         publication.next_attempt_at = None
         publication.processing_started_at = None
+        publication.content.status = "failed"
+        if publication.source_draft_id:
+            draft = db.query(PostDraft).filter(PostDraft.id == publication.source_draft_id).first()
+            if draft:
+                draft.status = "failed"
         action = "failed"
     publication.error_message = payload.error_message
     publication.worker_id = None
