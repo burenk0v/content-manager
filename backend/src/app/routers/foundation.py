@@ -5,6 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.app.db import get_db
@@ -260,7 +261,21 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     if content.status not in {"approved", "scheduled"}:
         raise HTTPException(409, "Content must be approved or scheduled before adding a publication")
     publication = Publication(content_id=content.id, channel_id=channel.id, scheduled_at=payload.scheduled_at, idempotency_key=key, status="scheduled")
-    db.add(publication); db.flush()
+    db.add(publication)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
+        if existing:
+            return existing
+        duplicate = db.query(Publication).filter(
+            Publication.content_id == payload.content_id,
+            Publication.channel_id == payload.channel_id,
+        ).first()
+        if duplicate:
+            raise HTTPException(409, "Publication already exists for this content and channel")
+        raise
     if content.status == "approved":
         transition_content(db, content, "scheduled")
     audit(db, content.workspace_id, "publication", publication.id, "scheduled")
