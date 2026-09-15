@@ -1,4 +1,5 @@
 import os
+import uuid
 
 os.environ["SERVICE_ACCOUNT_TOKEN"] = "test-token"
 
@@ -29,14 +30,15 @@ HEADERS = {"X-Service-Token": "test-token"}
 
 
 def create_publication():
-    workspace = client.post("/content/workspaces", json={"name": "Test", "slug": "test"}, headers=HEADERS)
+    suffix = uuid.uuid4().hex[:8]
+    workspace = client.post("/content/workspaces", json={"name": f"Test {suffix}", "slug": f"test-{suffix}"}, headers=HEADERS)
     assert workspace.status_code == 201
     workspace_id = workspace.json()["id"]
 
     channel = client.post("/content/channels", json={
         "workspace_id": workspace_id,
         "platform": "telegram",
-        "external_id": "@test_channel",
+        "external_id": f"@test_channel_{suffix}",
     }, headers=HEADERS)
     assert channel.status_code == 201
     channel_id = channel.json()["id"]
@@ -53,25 +55,25 @@ def create_publication():
     publication = client.post("/content/publications", json={
         "content_id": content_id,
         "channel_id": channel_id,
-        "idempotency_key": "publish-1",
+        "idempotency_key": f"publish-{suffix}",
     }, headers=HEADERS)
     assert publication.status_code == 201
-    return publication.json()["id"]
+    return publication.json()
 
 
 def test_content_lifecycle_and_idempotent_publication():
-    publication_id = create_publication()
+    publication = create_publication()
     second = client.post("/content/publications", json={
-        "content_id": 1,
-        "channel_id": 1,
-        "idempotency_key": "publish-1",
+        "content_id": publication["content_id"],
+        "channel_id": publication["channel_id"],
+        "idempotency_key": publication["idempotency_key"],
     }, headers=HEADERS)
     assert second.status_code == 201
-    assert second.json()["id"] == publication_id
+    assert second.json()["id"] == publication["id"]
 
 
 def test_publication_claim_is_single_owner_and_can_complete():
-    publication_id = create_publication()
+    publication_id = create_publication()["id"]
 
     first = client.post(
         f"/content/publications/{publication_id}/claim",
@@ -107,7 +109,7 @@ def test_publication_claim_is_single_owner_and_can_complete():
 
 
 def test_publication_failure_can_be_retried_then_failed():
-    publication_id = create_publication()
+    publication_id = create_publication()["id"]
 
     claimed = client.post(
         f"/content/publications/{publication_id}/claim",
