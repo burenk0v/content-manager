@@ -317,9 +317,9 @@ def claim_publication(publication_id: int, payload: PublicationClaim, db: Sessio
     publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
     if publication.content.status != "publishing":
         transition_content(db, publication.content, "publishing")
+    response = PublicationOut.model_validate(publication)
     db.commit()
-    db.refresh(publication)
-    return publication
+    return response
 
 
 @router.post("/publications/{publication_id}/heartbeat", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
