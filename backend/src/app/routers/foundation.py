@@ -1,9 +1,10 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from src.app.db import get_db
@@ -81,12 +82,30 @@ class PublicationOut(BaseModel):
     status: str
     scheduled_at: Optional[datetime]
     published_at: Optional[datetime]
+    processing_started_at: Optional[datetime]
+    next_attempt_at: Optional[datetime]
+    attempt_count: int
+    worker_id: Optional[str]
     external_id: Optional[str]
     idempotency_key: str
     error_message: Optional[str]
     created_at: datetime
     class Config:
         orm_mode = True
+
+class PublicationClaim(BaseModel):
+    worker_id: str = Field(..., min_length=1, max_length=200)
+
+class PublicationComplete(BaseModel):
+    worker_id: str = Field(..., min_length=1, max_length=200)
+    external_id: str = Field(..., min_length=1, max_length=255)
+
+class PublicationFail(BaseModel):
+    worker_id: str = Field(..., min_length=1, max_length=200)
+    error_message: str = Field(..., min_length=1, max_length=4000)
+    retry: bool = True
+    max_attempts: int = Field(5, ge=1, le=20)
+    retry_delay_seconds: int = Field(60, ge=1, le=86400)
 
 
 def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
@@ -174,3 +193,85 @@ def list_publications(workspace_id: Optional[int] = None, db: Session = Depends(
     query = db.query(Publication).join(Channel)
     if workspace_id is not None: query = query.filter(Channel.workspace_id == workspace_id)
     return query.order_by(Publication.scheduled_at.asc(), Publication.id.asc()).all()
+
+@router.post("/publications/{publication_id}/claim", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+def claim_publication(publication_id: int, payload: PublicationClaim, db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    eligible = (
+        (Publication.scheduled_at.is_(None) | (Publication.scheduled_at <= now))
+        & (Publication.next_attempt_at.is_(None) | (Publication.next_attempt_at <= now))
+    )
+    result = db.execute(
+        update(Publication)
+        .where(Publication.id == publication_id, Publication.status == "scheduled", eligible)
+        .values(status="processing", processing_started_at=now, worker_id=payload.worker_id, attempt_count=Publication.attempt_count + 1, error_message=None)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        publication = db.query(Publication).filter(Publication.id == publication_id).first()
+        if not publication:
+            raise HTTPException(404, "Publication not found")
+        raise HTTPException(409, "Publication is not claimable")
+    db.commit()
+    return db.query(Publication).filter(Publication.id == publication_id).first()
+
+@router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+def complete_publication(publication_id: int, payload: PublicationComplete, db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    result = db.execute(update(Publication).where(
+        Publication.id == publication_id,
+        Publication.status == "processing",
+        Publication.worker_id == payload.worker_id,
+    ).values(status="published", published_at=now, external_id=payload.external_id, processing_started_at=None, next_attempt_at=None))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, "Publication is not owned by this worker")
+    publication = db.query(Publication).filter(Publication.id == publication_id).first()
+    channel = db.query(Channel).filter(Channel.id == publication.channel_id).first()
+    audit(db, channel.workspace_id, "publication", publication.id, "published")
+    db.commit(); db.refresh(publication)
+    return publication
+
+@router.post("/publications/{publication_id}/fail", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+def fail_publication(publication_id: int, payload: PublicationFail, db: Session = Depends(get_db)):
+    publication = db.query(Publication).filter(Publication.id == publication_id).first()
+    if not publication: raise HTTPException(404, "Publication not found")
+    if publication.status != "processing" or publication.worker_id != payload.worker_id:
+        raise HTTPException(409, "Publication is not owned by this worker")
+    retry = payload.retry and publication.attempt_count < payload.max_attempts
+    if retry:
+        publication.status = "scheduled"
+        publication.next_attempt_at = datetime.utcnow() + timedelta(seconds=payload.retry_delay_seconds)
+        publication.processing_started_at = None
+        action = "retry_scheduled"
+    else:
+        publication.status = "failed"
+        publication.next_attempt_at = None
+        publication.processing_started_at = None
+        action = "failed"
+    publication.error_message = payload.error_message
+    publication.worker_id = None
+    channel = db.query(Channel).filter(Channel.id == publication.channel_id).first()
+    audit(db, channel.workspace_id, "publication", publication.id, action)
+    db.commit(); db.refresh(publication)
+    return publication
+
+@router.post("/publications/recover-stale", response_model=List[PublicationOut], dependencies=[Depends(require_service_token)])
+def recover_stale_publications(stale_after_seconds: int = 900, db: Session = Depends(get_db)):
+    cutoff = datetime.utcnow() - timedelta(seconds=max(60, min(stale_after_seconds, 86400)))
+    stale = db.query(Publication).filter(
+        Publication.status == "processing",
+        Publication.processing_started_at.is_not(None),
+        Publication.processing_started_at < cutoff,
+    ).all()
+    for publication in stale:
+        publication.status = "scheduled"
+        publication.next_attempt_at = datetime.utcnow()
+        publication.processing_started_at = None
+        publication.worker_id = None
+        publication.error_message = "Recovered stale processing claim"
+    if stale:
+        db.commit()
+        for publication in stale:
+            db.refresh(publication)
+    return stale
