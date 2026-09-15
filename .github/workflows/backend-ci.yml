@@ -18,4 +18,5 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -r src/requirements.txt
-      - run: pytest -q
+      - run: PYTHONPATH=. pytest -q
+      - run: alembic upgrade head
