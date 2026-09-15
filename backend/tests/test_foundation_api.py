@@ -5,11 +5,12 @@ os.environ["SERVICE_ACCOUNT_TOKEN"] = "test-token"
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from src.app.db import Base, get_db
 from src.app.main import app
 
-engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base.metadata.create_all(bind=engine)
 
