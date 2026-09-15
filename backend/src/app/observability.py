@@ -27,3 +27,23 @@ async def request_observability(request: Request, call_next):
         )
         if response is not None:
             response.headers["X-Request-ID"] = request_id
+
+
+def publication_event(
+    event: str,
+    publication_id: int,
+    *,
+    status: str | None = None,
+    worker_id: str | None = None,
+    attempt_count: int | None = None,
+    error: str | None = None,
+) -> None:
+    logger.info(
+        "publication_event event=%s publication_id=%s status=%s worker_id=%s attempt_count=%s error=%s",
+        event,
+        publication_id,
+        status,
+        worker_id,
+        attempt_count,
+        error,
+    )
