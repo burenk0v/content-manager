@@ -4,7 +4,7 @@ Revision ID: 0006_publication_processing_lease
 Revises: 0005_publication_content_channel_unique
 """
 from alembic import op
-from sqlalchemy import inspect
+from sqlalchemy import Column, String, inspect
 
 revision = "0006_publication_processing_lease"
 down_revision = "0005_publication_content_channel_unique"
@@ -23,7 +23,7 @@ def upgrade():
 
     columns = {column["name"] for column in inspector.get_columns("publications")}
     if COLUMN_NAME not in columns:
-        op.add_column("publications", op.f("processing_token"))
+        op.add_column("publications", Column(COLUMN_NAME, String(), nullable=True))
 
     indexes = {index["name"] for index in inspector.get_indexes("publications")}
     if INDEX_NAME not in indexes:
