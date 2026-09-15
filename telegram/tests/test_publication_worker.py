@@ -1,6 +1,6 @@
 import pytest
 
-from src.publication_worker import publish_one
+from src.publication_worker import calculate_retry_delay, publish_one
 
 
 class FakeBot:
@@ -24,6 +24,7 @@ async def test_publish_one_claims_sends_and_completes(monkeypatch):
             "channel_platform": "telegram",
             "channel_external_id": "@channel",
             "content_body": "<b>Hello</b>",
+            "attempt_count": 1,
         }
 
     async def complete(publication_id, external_id):
@@ -49,6 +50,7 @@ async def test_publish_one_splits_oversized_content(monkeypatch):
             "channel_platform": "telegram",
             "channel_external_id": "@channel",
             "content_body": "x" * 8000,
+            "attempt_count": 1,
         }
 
     async def complete(publication_id, external_id):
@@ -90,10 +92,11 @@ async def test_publish_one_persists_send_failure(monkeypatch):
             "channel_platform": "telegram",
             "channel_external_id": "@channel",
             "content_body": "Hello",
+            "attempt_count": 2,
         }
 
-    async def fail(publication_id, error_message):
-        failures.append((publication_id, error_message))
+    async def fail(publication_id, error_message, attempt_count):
+        failures.append((publication_id, error_message, attempt_count))
 
     async def send_message(*args, **kwargs):
         raise RuntimeError("Telegram unavailable")
@@ -104,4 +107,16 @@ async def test_publish_one_persists_send_failure(monkeypatch):
 
     await publish_one(bot, {"id": 7})
 
-    assert failures == [(7, "Telegram unavailable")]
+    assert failures == [(7, "Telegram unavailable", 2)]
+
+
+def test_retry_delay_grows_exponentially(monkeypatch):
+    monkeypatch.setattr("src.publication_worker.random.uniform", lambda low, high: high)
+    assert calculate_retry_delay(1) == 75
+    assert calculate_retry_delay(2) == 150
+    assert calculate_retry_delay(3) == 300
+
+
+def test_retry_delay_is_capped(monkeypatch):
+    monkeypatch.setattr("src.publication_worker.random.uniform", lambda low, high: high)
+    assert calculate_retry_delay(99) == 3600
