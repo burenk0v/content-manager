@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from aiogram import Bot
 
-from telegram_format import prepare_telegram_chunks
+from providers import PublicationContext, TelegramPublisher
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
@@ -37,11 +37,7 @@ async def fetch_ready_publications() -> list[dict[str, Any]]:
 
 
 async def claim_publication(publication_id: int) -> dict[str, Any] | None:
-    response = await backend_request(
-        "POST",
-        f"/content/publications/{publication_id}/claim",
-        json={"worker_id": WORKER_ID},
-    )
+    response = await backend_request("POST", f"/content/publications/{publication_id}/claim", json={"worker_id": WORKER_ID})
     if response.status_code == 409:
         return None
     response.raise_for_status()
@@ -49,25 +45,15 @@ async def claim_publication(publication_id: int) -> dict[str, Any] | None:
 
 
 async def complete_publication(publication_id: int, external_id: str) -> None:
-    response = await backend_request(
-        "POST",
-        f"/content/publications/{publication_id}/complete",
-        json={"worker_id": WORKER_ID, "external_id": external_id},
-    )
+    response = await backend_request("POST", f"/content/publications/{publication_id}/complete", json={"worker_id": WORKER_ID, "external_id": external_id})
     response.raise_for_status()
 
 
 def calculate_retry_delay(attempt_count: int) -> int:
-    """Exponential backoff with bounded symmetric jitter.
-
-    attempt_count is the number of the attempt that just failed. The delay is
-    capped before jitter, then jitter is clamped to the configured maximum.
-    """
     exponent = max(0, attempt_count - 1)
     base_delay = min(RETRY_MAX_DELAY_SECONDS, RETRY_DELAY_SECONDS * (2**exponent))
     jitter = base_delay * max(0.0, min(RETRY_JITTER_RATIO, 1.0))
-    delay = base_delay + random.uniform(-jitter, jitter)
-    return max(1, min(RETRY_MAX_DELAY_SECONDS, round(delay)))
+    return max(1, min(RETRY_MAX_DELAY_SECONDS, round(base_delay + random.uniform(-jitter, jitter))))
 
 
 async def fail_publication(publication_id: int, error_message: str, attempt_count: int) -> None:
@@ -99,30 +85,19 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
     attempt_count = int(claimed.get("attempt_count") or 1)
     try:
         platform = claimed.get("channel_platform")
-        if platform not in {None, "telegram"}:
+        if platform != "telegram":
             raise RuntimeError(f"Unsupported publication platform: {platform}")
 
-        chunks = prepare_telegram_chunks(claimed.get("content_body", ""))
-        if not chunks:
-            raise ValueError("Publication content is empty")
-
-        first_message_id: str | None = None
-        for chunk in chunks:
-            sent = await bot.send_message(
-                claimed["channel_external_id"],
-                chunk,
-                parse_mode="HTML",
+        publisher = TelegramPublisher(bot)
+        result = await publisher.publish(
+            PublicationContext(
+                publication_id=publication_id,
+                channel_external_id=claimed["channel_external_id"],
+                content_body=claimed.get("content_body", ""),
             )
-            if first_message_id is None:
-                first_message_id = str(sent.message_id)
-
-        await complete_publication(publication_id, first_message_id or "unknown")
-        logging.info(
-            "Publication %s published as %s Telegram message(s), first message %s",
-            publication_id,
-            len(chunks),
-            first_message_id,
         )
+        await complete_publication(publication_id, result.external_id)
+        logging.info("Publication %s published as %s Telegram message(s), first message %s", publication_id, result.message_count, result.external_id)
     except Exception as exc:
         logging.exception("Publication %s failed", publication_id)
         try:
