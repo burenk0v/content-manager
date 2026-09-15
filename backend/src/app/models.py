@@ -7,14 +7,7 @@ from .db import Base
 
 
 CONTENT_STATUSES = (
-    "draft",
-    "review",
-    "approved",
-    "scheduled",
-    "publishing",
-    "published",
-    "failed",
-    "archived",
+    "draft", "review", "approved", "scheduled", "publishing", "published", "failed", "archived",
 )
 
 
@@ -141,6 +134,7 @@ class Publication(Base):
     published_at = Column(DateTime, nullable=True)
     processing_started_at = Column(DateTime, nullable=True)
     processing_token = Column(String, nullable=True, index=True)
+    lease_heartbeat_at = Column(DateTime, nullable=True, index=True)
     next_attempt_at = Column(DateTime, nullable=True, index=True)
     attempt_count = Column(Integer, nullable=False, default=0)
     worker_id = Column(String, nullable=True)
