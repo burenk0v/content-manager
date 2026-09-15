@@ -2,17 +2,10 @@ from fastapi import FastAPI
 
 from src.app.routers import auth
 from src.app.routers import content
-from src.app import db, models
+from src.app import db
 
 
-app = FastAPI()
-
-
-@app.on_event("startup")
-def on_startup():
-    # Create DB tables if they don't exist
-    db.Base.metadata.create_all(bind=db.engine)
-    db.ensure_schema()
+app = FastAPI(title="Content Manager API", version="0.1.0")
 
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -22,6 +15,11 @@ app.include_router(content.router, prefix="/content", tags=["content"])
 @app.get("/")
 def root():
     return {"status": "Backend running"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 @app.get("/health/db")
