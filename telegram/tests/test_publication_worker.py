@@ -9,7 +9,7 @@ class FakeBot:
 
     async def send_message(self, chat_id, text, parse_mode=None):
         self.calls.append((chat_id, text, parse_mode))
-        return type("Message", (), {"message_id": 42})()
+        return type("Message", (), {"message_id": 42 + len(self.calls) - 1})()
 
 
 @pytest.mark.asyncio
@@ -36,6 +36,33 @@ async def test_publish_one_claims_sends_and_completes(monkeypatch):
 
     assert bot.calls == [("@channel", "<b>Hello</b>", "HTML")]
     assert completed == [(7, "42")]
+
+
+@pytest.mark.asyncio
+async def test_publish_one_splits_oversized_content(monkeypatch):
+    bot = FakeBot()
+    completed = []
+
+    async def claim(publication_id):
+        return {
+            "id": 8,
+            "channel_platform": "telegram",
+            "channel_external_id": "@channel",
+            "content_body": "x" * 8000,
+        }
+
+    async def complete(publication_id, external_id):
+        completed.append((publication_id, external_id))
+
+    monkeypatch.setattr("src.publication_worker.claim_publication", claim)
+    monkeypatch.setattr("src.publication_worker.complete_publication", complete)
+
+    await publish_one(bot, {"id": 8})
+
+    assert len(bot.calls) == 3
+    assert all(call[0] == "@channel" and call[2] == "HTML" for call in bot.calls)
+    assert all(len(call[1]) <= 3800 for call in bot.calls)
+    assert completed == [(8, "42")]
 
 
 @pytest.mark.asyncio
