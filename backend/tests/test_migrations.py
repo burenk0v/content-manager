@@ -1,46 +1,62 @@
 import os
+import subprocess
+import sys
+from pathlib import Path
 
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, inspect, text
 
+def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'fresh.db'}"
+    env = os.environ.copy()
+    env["DATABASE_URL"] = database_url
+    env["PYTHONPATH"] = "."
 
-def test_legacy_schema_migrates_to_phase1_head(tmp_path, monkeypatch):
-    db_path = tmp_path / "legacy.sqlite3"
-    url = f"sqlite:///{db_path}"
-    engine = create_engine(url)
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
-    with engine.begin() as connection:
-        connection.execute(text("CREATE TABLE topics (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, language VARCHAR NOT NULL)"))
-        connection.execute(text("CREATE TABLE prompts (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, language VARCHAR NOT NULL, text TEXT NOT NULL)"))
-        connection.execute(text("CREATE TABLE assistant_message_templates (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, language VARCHAR NOT NULL, text TEXT NOT NULL)"))
-        connection.execute(text("CREATE TABLE publication_schedules (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL, chat_id VARCHAR NOT NULL, chat_name VARCHAR, language VARCHAR NOT NULL, assistant_message TEXT NOT NULL, schedule_type VARCHAR NOT NULL, schedule_value VARCHAR NOT NULL, is_active BOOLEAN, last_run TIMESTAMP, created_at TIMESTAMP)"))
-        connection.execute(text("CREATE TABLE post_drafts (id INTEGER PRIMARY KEY, schedule_id INTEGER NOT NULL, topic_id INTEGER, topic_name VARCHAR NOT NULL, language VARCHAR NOT NULL, generated_text TEXT NOT NULL, status VARCHAR NOT NULL, created_at TIMESTAMP, updated_at TIMESTAMP)"))
+    from sqlalchemy import create_engine, inspect
 
-    monkeypatch.setenv("DATABASE_URL", url)
-    config = Config(os.path.join(os.path.dirname(os.path.dirname(__file__)), "alembic.ini"))
-    config.set_main_option("script_location", os.path.join(os.path.dirname(os.path.dirname(__file__)), "migrations"))
-    command.upgrade(config, "head")
-
+    engine = create_engine(database_url)
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
-    assert {"workspaces", "channels", "contents", "content_versions", "publications", "audit_logs"} <= tables
-
-    schedule_columns = {column["name"] for column in inspector.get_columns("publication_schedules")}
-    assert {"prompt_id", "assistant_template_id", "timezone", "force_run_requested_at"} <= schedule_columns
+    assert tables >= {
+        "users",
+        "workspaces",
+        "channels",
+        "contents",
+        "content_versions",
+        "publications",
+        "audit_logs",
+    }
+    assert not tables.intersection({
+        "topics",
+        "prompts",
+        "assistant_message_templates",
+        "publication_schedules",
+        "post_drafts",
+    })
 
     publication_columns = {column["name"] for column in inspector.get_columns("publications")}
-    assert {"source_draft_id", "processing_started_at", "processing_token", "lease_heartbeat_at", "next_attempt_at", "attempt_count", "worker_id"} <= publication_columns
+    assert {
+        "processing_token",
+        "lease_heartbeat_at",
+        "next_attempt_at",
+        "attempt_count",
+        "worker_id",
+        "idempotency_key",
+    } <= publication_columns
+
     publication_indexes = {index["name"]: index for index in inspector.get_indexes("publications")}
-    assert "uq_publications_content_channel" in publication_indexes
     assert publication_indexes["uq_publications_content_channel"]["unique"] is True
     assert publication_indexes["uq_publications_content_channel"]["column_names"] == ["content_id", "channel_id"]
     assert "ix_publications_processing_token" in publication_indexes
     assert "ix_publications_lease_heartbeat_at" in publication_indexes
 
-    content_columns = {column["name"] for column in inspector.get_columns("contents")}
-    assert "status" in content_columns
-
     with engine.connect() as connection:
-        version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert version == "0007_publication_lease_heartbeat"
+        version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
+    assert version == "0001_initial"
