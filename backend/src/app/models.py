@@ -128,6 +128,7 @@ class Publication(Base):
     id = Column(Integer, primary_key=True, index=True)
     content_id = Column(Integer, ForeignKey('contents.id', ondelete='CASCADE'), nullable=False, index=True)
     channel_id = Column(Integer, ForeignKey('channels.id', ondelete='CASCADE'), nullable=False, index=True)
+    source_draft_id = Column(Integer, ForeignKey('post_drafts.id', ondelete='SET NULL'), nullable=True, index=True)
     status = Column(String, nullable=False, default='scheduled', index=True)
     scheduled_at = Column(DateTime, nullable=True, index=True)
     published_at = Column(DateTime, nullable=True)
@@ -142,6 +143,7 @@ class Publication(Base):
 
     content = relationship('Content', back_populates='publications')
     channel = relationship('Channel', back_populates='publications')
+    source_draft = relationship('PostDraft')
 
 
 class AuditLog(Base):
