@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.app.db import get_db
 from src.app.models import AuditLog, Channel, Content, ContentVersion, Publication, Workspace
+from src.app.observability import publication_event
 from src.app.publication_state import sync_content_status
 
 router = APIRouter()
@@ -262,6 +263,7 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     if content.status == "approved":
         transition_content(db, content, "scheduled")
     audit(db, content.workspace_id, "publication", publication.id, "scheduled")
+    publication_event("scheduled", publication.id, status=publication.status, attempt_count=publication.attempt_count)
     db.commit()
     db.refresh(publication)
     return publication
@@ -295,6 +297,7 @@ def recover_stale_publications(stale_after_seconds: int = 900, db: Session = Dep
         publication.worker_id = None
         publication.error_message = "Recovered stale processing claim"
         sync_content_status(db, publication.content)
+        publication_event("recovered", publication.id, status=publication.status, attempt_count=publication.attempt_count)
     if stale:
         db.commit()
         for publication in stale:
@@ -318,6 +321,7 @@ def claim_publication(publication_id: int, payload: PublicationClaim, db: Sessio
     if publication.content.status != "publishing":
         transition_content(db, publication.content, "publishing")
     response = PublicationOut.model_validate(publication)
+    publication_event("claimed", publication.id, status=publication.status, worker_id=publication.worker_id, attempt_count=publication.attempt_count)
     db.commit()
     return response
 
@@ -328,8 +332,10 @@ def heartbeat_publication(publication_id: int, payload: PublicationLease, db: Se
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
+    publication = db.query(Publication).filter(Publication.id == publication_id).first()
+    publication_event("heartbeat", publication.id, status=publication.status, worker_id=publication.worker_id, attempt_count=publication.attempt_count)
     db.commit()
-    return db.query(Publication).filter(Publication.id == publication_id).first()
+    return publication
 
 
 @router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
@@ -342,6 +348,7 @@ def complete_publication(publication_id: int, payload: PublicationComplete, db: 
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
     sync_content_status(db, publication.content)
     audit(db, publication.channel.workspace_id, "publication", publication.id, "published")
+    publication_event("completed", publication.id, status=publication.status, attempt_count=publication.attempt_count)
     db.commit()
     db.refresh(publication)
     return publication
@@ -367,6 +374,7 @@ def fail_publication(publication_id: int, payload: PublicationFail, db: Session 
     publication.worker_id = None
     sync_content_status(db, publication.content)
     audit(db, publication.channel.workspace_id, "publication", publication.id, "failed")
+    publication_event("retry_scheduled" if publication.status == "scheduled" else "failed", publication.id, status=publication.status, attempt_count=publication.attempt_count, error=publication.error_message)
     db.commit()
     db.refresh(publication)
     return publication
