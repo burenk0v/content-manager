@@ -41,11 +41,18 @@ async def claim_publication(publication_id: int) -> dict[str, Any] | None:
     if response.status_code == 409:
         return None
     response.raise_for_status()
-    return response.json()
+    claimed = response.json()
+    if not claimed.get("processing_token"):
+        raise RuntimeError(f"Publication {publication_id} was claimed without a processing lease")
+    return claimed
 
 
-async def complete_publication(publication_id: int, external_id: str) -> None:
-    response = await backend_request("POST", f"/content/publications/{publication_id}/complete", json={"worker_id": WORKER_ID, "external_id": external_id})
+async def complete_publication(publication_id: int, external_id: str, processing_token: str) -> None:
+    response = await backend_request(
+        "POST",
+        f"/content/publications/{publication_id}/complete",
+        json={"worker_id": WORKER_ID, "processing_token": processing_token, "external_id": external_id},
+    )
     response.raise_for_status()
 
 
@@ -56,12 +63,13 @@ def calculate_retry_delay(attempt_count: int) -> int:
     return max(1, min(RETRY_MAX_DELAY_SECONDS, round(base_delay + random.uniform(-jitter, jitter))))
 
 
-async def fail_publication(publication_id: int, error_message: str, attempt_count: int) -> None:
+async def fail_publication(publication_id: int, error_message: str, attempt_count: int, processing_token: str) -> None:
     response = await backend_request(
         "POST",
         f"/content/publications/{publication_id}/fail",
         json={
             "worker_id": WORKER_ID,
+            "processing_token": processing_token,
             "error_message": error_message[:4000],
             "retry": True,
             "max_attempts": MAX_ATTEMPTS,
@@ -83,6 +91,7 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
         return
 
     attempt_count = int(claimed.get("attempt_count") or 1)
+    processing_token = claimed["processing_token"]
     try:
         platform = claimed.get("channel_platform", "")
         publisher = registry.get(platform, bot=bot)
@@ -93,12 +102,17 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
                 content_body=claimed.get("content_body", ""),
             )
         )
-        await complete_publication(publication_id, result.external_id)
+        await complete_publication(publication_id, result.external_id, processing_token)
         logging.info("Publication %s published as %s message(s), first message %s", publication_id, result.message_count, result.external_id)
     except Exception as exc:
         logging.exception("Publication %s failed", publication_id)
         try:
-            await fail_publication(publication_id, str(exc), attempt_count)
+            await fail_publication(publication_id, str(exc), attempt_count, processing_token)
+        except httpx.HTTPStatusError as persist_exc:
+            if persist_exc.response.status_code == 409:
+                logging.warning("Publication %s lease was lost before failure could be persisted", publication_id)
+            else:
+                logging.exception("Failed to persist failure for publication %s", publication_id)
         except Exception:
             logging.exception("Failed to persist failure for publication %s", publication_id)
 
