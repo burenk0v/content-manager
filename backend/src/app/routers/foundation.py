@@ -257,11 +257,12 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     key = payload.idempotency_key or f"content:{content.id}:channel:{channel.id}:scheduled:{payload.scheduled_at or 'now'}"
     existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
     if existing: return existing
-    if content.status != "approved":
-        raise HTTPException(409, "Content must be approved before scheduling")
+    if content.status not in {"approved", "scheduled"}:
+        raise HTTPException(409, "Content must be approved or scheduled before adding a publication")
     publication = Publication(content_id=content.id, channel_id=channel.id, scheduled_at=payload.scheduled_at, idempotency_key=key, status="scheduled")
     db.add(publication); db.flush()
-    transition_content(db, content, "scheduled")
+    if content.status == "approved":
+        transition_content(db, content, "scheduled")
     audit(db, content.workspace_id, "publication", publication.id, "scheduled")
     db.commit(); db.refresh(publication)
     return publication
