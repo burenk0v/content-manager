@@ -1,12 +1,14 @@
 from fastapi import FastAPI
 
+from src.app import db
+from src.app.observability import request_observability
 from src.app.routers import auth
 from src.app.routers import foundation
 from src.app.routers import lifecycle
-from src.app import db
 
 
 app = FastAPI(title="Content Manager API", version="0.1.0")
+app.middleware("http")(request_observability)
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(foundation.router, prefix="/content", tags=["content-lifecycle"])
