@@ -96,7 +96,6 @@ async def recover_stale_publications() -> None:
 
 async def _lease_heartbeat(publication_id: int, processing_token: str) -> None:
     while True:
-        await asyncio.sleep(max(1, LEASE_HEARTBEAT_INTERVAL_SECONDS))
         try:
             await heartbeat_publication(publication_id, processing_token)
         except httpx.HTTPStatusError as exc:
@@ -108,6 +107,7 @@ async def _lease_heartbeat(publication_id: int, processing_token: str) -> None:
         except Exception:
             logging.exception("Failed to renew lease for publication %s", publication_id)
             return
+        await asyncio.sleep(max(1, LEASE_HEARTBEAT_INTERVAL_SECONDS))
 
 
 async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
