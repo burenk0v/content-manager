@@ -205,14 +205,7 @@ def list_channels(workspace_id: Optional[int] = None, db: Session = Depends(get_
 def create_content(payload: ContentCreate, db: Session = Depends(get_db)):
     if not db.query(Workspace).filter(Workspace.id == payload.workspace_id).first():
         raise HTTPException(404, "Workspace not found")
-    content = Content(
-        workspace_id=payload.workspace_id,
-        title=payload.title,
-        body=payload.body,
-        language=payload.language.lower(),
-        created_by=payload.created_by,
-        status="draft",
-    )
+    content = Content(workspace_id=payload.workspace_id, title=payload.title, body=payload.body, language=payload.language.lower(), created_by=payload.created_by, status="draft")
     db.add(content)
     db.flush()
     db.add(ContentVersion(content_id=content.id, version=1, body=payload.body, source=payload.source, created_by=payload.created_by))
@@ -227,7 +220,7 @@ def list_contents(workspace_id: Optional[int] = None, db: Session = Depends(get_
     query = db.query(Content)
     if workspace_id is not None:
         query = query.filter(Content.workspace_id == workspace_id)
-    return query.order_by(Content.id.desc()).all()
+    return query.order_by(Content.created_at.asc(), Content.id.asc()).all()
 
 
 @router.get("/contents/{content_id}/versions", response_model=List[ContentVersionOut], dependencies=[Depends(require_service_token)])
@@ -277,19 +270,7 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
 @router.get("/publications/ready", response_model=List[PublicationReadyOut], dependencies=[Depends(require_service_token)])
 def list_ready_publications(limit: int = 20, db: Session = Depends(get_db)):
     now = datetime.utcnow()
-    query = (
-        db.query(Publication)
-        .join(Content)
-        .join(Channel)
-        .filter(
-            Publication.status == "scheduled",
-            or_(Publication.scheduled_at.is_(None), Publication.scheduled_at <= now),
-            or_(Publication.next_attempt_at.is_(None), Publication.next_attempt_at <= now),
-            Channel.is_active.is_(True),
-        )
-        .order_by(Publication.id.asc())
-        .limit(max(1, min(limit, 100)))
-    )
+    query = db.query(Publication).join(Content).join(Channel).filter(Publication.status == "scheduled", or_(Publication.scheduled_at.is_(None), Publication.scheduled_at <= now), or_(Publication.next_attempt_at.is_(None), Publication.next_attempt_at <= now), Channel.is_active.is_(True)).order_by(Publication.id.asc()).limit(max(1, min(limit, 100)))
     return [publication_ready_out(item) for item in query.all()]
 
 
@@ -326,18 +307,14 @@ def claim_publication(publication_id: int, payload: PublicationClaim, db: Sessio
     now = datetime.utcnow()
     processing_token = uuid.uuid4().hex
     eligible = and_(or_(Publication.scheduled_at.is_(None), Publication.scheduled_at <= now), or_(Publication.next_attempt_at.is_(None), Publication.next_attempt_at <= now))
-    result = db.execute(
-        update(Publication)
-        .where(Publication.id == publication_id, Publication.status == "scheduled", eligible)
-        .values(status="processing", processing_started_at=now, processing_token=processing_token, lease_heartbeat_at=now, worker_id=payload.worker_id, attempt_count=Publication.attempt_count + 1, error_message=None)
-    )
+    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "scheduled", eligible).values(status="processing", processing_started_at=now, processing_token=processing_token, lease_heartbeat_at=now, worker_id=payload.worker_id, attempt_count=Publication.attempt_count + 1, error_message=None).execution_options(synchronize_session=False))
     if result.rowcount != 1:
         db.rollback()
         publication = db.query(Publication).filter(Publication.id == publication_id).first()
         if not publication:
             raise HTTPException(404, "Publication not found")
         raise HTTPException(409, "Publication is not claimable")
-    publication = db.query(Publication).filter(Publication.id == publication_id).first()
+    publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
     if publication.content.status != "publishing":
         transition_content(db, publication.content, "publishing")
     db.commit()
@@ -347,11 +324,7 @@ def claim_publication(publication_id: int, payload: PublicationClaim, db: Sessio
 
 @router.post("/publications/{publication_id}/heartbeat", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def heartbeat_publication(publication_id: int, payload: PublicationLease, db: Session = Depends(get_db)):
-    result = db.execute(
-        update(Publication)
-        .where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id, Publication.processing_token == payload.processing_token)
-        .values(lease_heartbeat_at=datetime.utcnow())
-    )
+    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id, Publication.processing_token == payload.processing_token).values(lease_heartbeat_at=datetime.utcnow()))
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
@@ -362,11 +335,7 @@ def heartbeat_publication(publication_id: int, payload: PublicationLease, db: Se
 @router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def complete_publication(publication_id: int, payload: PublicationComplete, db: Session = Depends(get_db)):
     now = datetime.utcnow()
-    result = db.execute(
-        update(Publication)
-        .where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id, Publication.processing_token == payload.processing_token)
-        .values(status="published", published_at=now, external_id=payload.external_id, processing_started_at=None, lease_heartbeat_at=None, next_attempt_at=None, worker_id=None, processing_token=None)
-    )
+    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id, Publication.processing_token == payload.processing_token).values(status="published", published_at=now, external_id=payload.external_id, processing_started_at=None, lease_heartbeat_at=None, next_attempt_at=None, worker_id=None, processing_token=None))
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
@@ -385,22 +354,19 @@ def fail_publication(publication_id: int, payload: PublicationFail, db: Session 
         raise HTTPException(404, "Publication not found")
     if publication.status != "processing" or publication.worker_id != payload.worker_id or publication.processing_token != payload.processing_token:
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
-    retry = payload.retry and publication.attempt_count < payload.max_attempts
-    if retry:
+    publication.error_message = payload.error_message
+    if payload.retry and publication.attempt_count < payload.max_attempts:
         publication.status = "scheduled"
         publication.next_attempt_at = datetime.utcnow() + timedelta(seconds=payload.retry_delay_seconds)
-        action = "retry_scheduled"
     else:
         publication.status = "failed"
         publication.next_attempt_at = None
-        action = "failed"
     publication.processing_started_at = None
-    publication.lease_heartbeat_at = None
     publication.processing_token = None
+    publication.lease_heartbeat_at = None
     publication.worker_id = None
-    publication.error_message = payload.error_message
     sync_content_status(db, publication.content)
-    audit(db, publication.channel.workspace_id, "publication", publication.id, action)
+    audit(db, publication.channel.workspace_id, "publication", publication.id, "failed")
     db.commit()
     db.refresh(publication)
     return publication
