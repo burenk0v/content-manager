@@ -52,7 +52,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
     } <= publication_columns
 
     publication_indexes = {index["name"]: index for index in inspector.get_indexes("publications")}
-    assert publication_indexes["uq_publications_content_channel"]["unique"] is True
+    assert publication_indexes["uq_publications_content_channel"]["unique"] == 1
     assert publication_indexes["uq_publications_content_channel"]["column_names"] == ["content_id", "channel_id"]
     assert "ix_publications_processing_token" in publication_indexes
     assert "ix_publications_lease_heartbeat_at" in publication_indexes
