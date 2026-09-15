@@ -2,14 +2,15 @@ from fastapi import FastAPI
 
 from src.app.routers import auth
 from src.app.routers import content
+from src.app.routers import foundation
 from src.app import db
 
 
 app = FastAPI(title="Content Manager API", version="0.1.0")
 
-
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(content.router, prefix="/content", tags=["content"])
+app.include_router(foundation.router, prefix="/content", tags=["content-lifecycle"])
 
 
 @app.get("/")
