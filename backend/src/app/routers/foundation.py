@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from src.app.db import get_db
 from src.app.models import AuditLog, Channel, Content, ContentVersion, PostDraft, Publication, PublicationSchedule, Workspace
+from src.app.publication_state import sync_content_status
 
 router = APIRouter()
 
@@ -148,11 +149,10 @@ def publication_ready_out(publication: Publication) -> PublicationReadyOut:
 
 
 def transition_content(db: Session, content: Content, target: str) -> None:
-    from src.app.content_lifecycle import transition_or_raise
     if content.status == target:
         return
+    from src.app.content_lifecycle import transition_or_raise
     transition_or_raise(content.status, target)
-    previous = content.status
     content.status = target
     content.updated_at = datetime.utcnow()
     audit(db, content.workspace_id, "content", content.id, "status_changed")
@@ -284,8 +284,7 @@ def recover_stale_publications(stale_after_seconds: int = 900, db: Session = Dep
     stale = db.query(Publication).filter(Publication.status == "processing", Publication.processing_started_at.is_not(None), Publication.processing_started_at < cutoff).all()
     for publication in stale:
         publication.status = "scheduled"; publication.next_attempt_at = datetime.utcnow(); publication.processing_started_at = None; publication.worker_id = None; publication.error_message = "Recovered stale processing claim"
-        if publication.content.status == "publishing":
-            transition_content(db, publication.content, "scheduled")
+        sync_content_status(db, publication.content)
     if stale:
         db.commit()
         for publication in stale: db.refresh(publication)
@@ -301,8 +300,7 @@ def claim_publication(publication_id: int, payload: PublicationClaim, db: Sessio
         if not publication: raise HTTPException(404, "Publication not found")
         raise HTTPException(409, "Publication is not claimable")
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
-    if publication.content.status == "scheduled":
-        transition_content(db, publication.content, "publishing")
+    sync_content_status(db, publication.content)
     db.commit()
     return db.query(Publication).filter(Publication.id == publication_id).first()
 
@@ -314,7 +312,7 @@ def complete_publication(publication_id: int, payload: PublicationComplete, db: 
         db.rollback(); raise HTTPException(409, "Publication is not owned by this worker")
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
     channel = db.query(Channel).filter(Channel.id == publication.channel_id).first()
-    if publication.content.status == "publishing": transition_content(db, publication.content, "published")
+    sync_content_status(db, publication.content)
     if publication.source_draft_id:
         draft = db.query(PostDraft).filter(PostDraft.id == publication.source_draft_id).first()
         if draft: draft.status = "published"
@@ -330,12 +328,11 @@ def fail_publication(publication_id: int, payload: PublicationFail, db: Session 
     retry = payload.retry and publication.attempt_count < payload.max_attempts
     if retry:
         publication.status = "scheduled"; publication.next_attempt_at = datetime.utcnow() + timedelta(seconds=payload.retry_delay_seconds); publication.processing_started_at = None; action = "retry_scheduled"
-        if publication.content.status == "publishing": transition_content(db, publication.content, "scheduled")
     else:
         publication.status = "failed"; publication.next_attempt_at = None; publication.processing_started_at = None; action = "failed"
-        if publication.content.status == "publishing": transition_content(db, publication.content, "failed")
     publication.error_message = payload.error_message; publication.worker_id = None
     channel = db.query(Channel).filter(Channel.id == publication.channel_id).first()
+    sync_content_status(db, publication.content)
     audit(db, channel.workspace_id, "publication", publication.id, action)
     db.commit(); db.refresh(publication)
     return publication
