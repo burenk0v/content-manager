@@ -32,6 +32,9 @@ def test_legacy_schema_migrates_to_phase1_head(tmp_path, monkeypatch):
     publication_columns = {column["name"] for column in inspector.get_columns("publications")}
     assert {"source_draft_id", "processing_started_at", "next_attempt_at", "attempt_count", "worker_id"} <= publication_columns
 
+    content_columns = {column["name"] for column in inspector.get_columns("contents")}
+    assert "status" in content_columns
+
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert version == "0003_publication_draft_link"
+    assert version == "0004_content_lifecycle"
