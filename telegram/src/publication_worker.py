@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from aiogram import Bot
 
-from providers import PublicationContext, TelegramPublisher
+from providers import PublicationContext, registry
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
@@ -84,11 +84,8 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
 
     attempt_count = int(claimed.get("attempt_count") or 1)
     try:
-        platform = claimed.get("channel_platform")
-        if platform != "telegram":
-            raise RuntimeError(f"Unsupported publication platform: {platform}")
-
-        publisher = TelegramPublisher(bot)
+        platform = claimed.get("channel_platform", "")
+        publisher = registry.get(platform, bot=bot)
         result = await publisher.publish(
             PublicationContext(
                 publication_id=publication_id,
@@ -97,7 +94,7 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
             )
         )
         await complete_publication(publication_id, result.external_id)
-        logging.info("Publication %s published as %s Telegram message(s), first message %s", publication_id, result.message_count, result.external_id)
+        logging.info("Publication %s published as %s message(s), first message %s", publication_id, result.message_count, result.external_id)
     except Exception as exc:
         logging.exception("Publication %s failed", publication_id)
         try:
