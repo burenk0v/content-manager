@@ -33,63 +33,38 @@ HEADERS = {"X-Service-Token": "test-token"}
 
 def create_publication(scheduled_at=None):
     suffix = uuid.uuid4().hex[:8]
-    workspace = client.post(
-        "/content/workspaces",
-        json={"name": f"Test {suffix}", "slug": f"test-{suffix}"},
-        headers=HEADERS,
-    )
+    workspace = client.post("/content/workspaces", json={"name": f"Test {suffix}", "slug": f"test-{suffix}"}, headers=HEADERS)
     assert workspace.status_code == 201
     workspace_id = workspace.json()["id"]
-
-    channel = client.post(
-        "/content/channels",
-        json={
-            "workspace_id": workspace_id,
-            "platform": "telegram",
-            "external_id": f"@test_channel_{suffix}",
-        },
-        headers=HEADERS,
-    )
+    channel = client.post("/content/channels", json={"workspace_id": workspace_id, "platform": "telegram", "external_id": f"@test_channel_{suffix}"}, headers=HEADERS)
     assert channel.status_code == 201
     channel_id = channel.json()["id"]
-
-    content = client.post(
-        "/content/contents",
-        json={
-            "workspace_id": workspace_id,
-            "body": "Hello Phase 1",
-            "language": "en",
-            "source": "human",
-        },
-        headers=HEADERS,
-    )
+    content = client.post("/content/contents", json={"workspace_id": workspace_id, "body": "Hello Phase 1", "language": "en", "source": "human"}, headers=HEADERS)
     assert content.status_code == 201
     content_id = content.json()["id"]
-
-    payload = {
-        "content_id": content_id,
-        "channel_id": channel_id,
-        "idempotency_key": f"publish-{suffix}",
-    }
+    for target in ("review", "approved"):
+        response = client.post(f"/content/contents/{content_id}/transition", json={"status": target}, headers=HEADERS)
+        assert response.status_code == 200
+    payload = {"content_id": content_id, "channel_id": channel_id, "idempotency_key": f"publish-{suffix}"}
     if scheduled_at is not None:
         payload["scheduled_at"] = scheduled_at
-
     publication = client.post("/content/publications", json=payload, headers=HEADERS)
     assert publication.status_code == 201
     return publication.json()
 
 
+def test_publication_requires_approved_content():
+    suffix = uuid.uuid4().hex[:8]
+    workspace = client.post("/content/workspaces", json={"name": f"Gate {suffix}", "slug": f"gate-{suffix}"}, headers=HEADERS).json()
+    channel = client.post("/content/channels", json={"workspace_id": workspace["id"], "platform": "telegram", "external_id": f"@gate_{suffix}"}, headers=HEADERS).json()
+    content = client.post("/content/contents", json={"workspace_id": workspace["id"], "body": "Needs approval", "language": "en"}, headers=HEADERS).json()
+    response = client.post("/content/publications", json={"content_id": content["id"], "channel_id": channel["id"]}, headers=HEADERS)
+    assert response.status_code == 409
+
+
 def test_content_lifecycle_and_idempotent_publication():
     publication = create_publication()
-    second = client.post(
-        "/content/publications",
-        json={
-            "content_id": publication["content_id"],
-            "channel_id": publication["channel_id"],
-            "idempotency_key": publication["idempotency_key"],
-        },
-        headers=HEADERS,
-    )
+    second = client.post("/content/publications", json={"content_id": publication["content_id"], "channel_id": publication["channel_id"], "idempotency_key": publication["idempotency_key"]}, headers=HEADERS)
     assert second.status_code == 201
     assert second.json()["id"] == publication["id"]
 
@@ -97,85 +72,46 @@ def test_content_lifecycle_and_idempotent_publication():
 def test_publication_ready_respects_schedule_and_active_channel():
     future = (datetime.utcnow() + timedelta(minutes=30)).isoformat()
     publication = create_publication(scheduled_at=future)
-
     ready = client.get("/content/publications/ready", headers=HEADERS)
     assert ready.status_code == 200
     assert publication["id"] not in {item["id"] for item in ready.json()}
 
 
 def test_publication_claim_is_single_owner_and_can_complete():
-    publication_id = create_publication()["id"]
-
-    first = client.post(
-        f"/content/publications/{publication_id}/claim",
-        json={"worker_id": "worker-a"},
-        headers=HEADERS,
-    )
+    publication = create_publication()
+    publication_id = publication["id"]
+    first = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
     assert first.status_code == 200
     assert first.json()["status"] == "processing"
     assert first.json()["attempt_count"] == 1
-
-    second = client.post(
-        f"/content/publications/{publication_id}/claim",
-        json={"worker_id": "worker-b"},
-        headers=HEADERS,
-    )
+    assert client.get(f"/content/contents/{publication['content_id']}/transitions", headers=HEADERS).json()["status"] == "publishing"
+    second = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "worker-b"}, headers=HEADERS)
     assert second.status_code == 409
-
-    wrong_worker = client.post(
-        f"/content/publications/{publication_id}/complete",
-        json={"worker_id": "worker-b", "external_id": "tg-1"},
-        headers=HEADERS,
-    )
+    wrong_worker = client.post(f"/content/publications/{publication_id}/complete", json={"worker_id": "worker-b", "external_id": "tg-1"}, headers=HEADERS)
     assert wrong_worker.status_code == 409
-
-    completed = client.post(
-        f"/content/publications/{publication_id}/complete",
-        json={"worker_id": "worker-a", "external_id": "tg-1"},
-        headers=HEADERS,
-    )
+    completed = client.post(f"/content/publications/{publication_id}/complete", json={"worker_id": "worker-a", "external_id": "tg-1"}, headers=HEADERS)
     assert completed.status_code == 200
     assert completed.json()["status"] == "published"
-    assert completed.json()["external_id"] == "tg-1"
+    assert client.get(f"/content/contents/{publication['content_id']}/transitions", headers=HEADERS).json()["status"] == "published"
 
 
 def test_publication_failure_can_be_retried_then_failed():
-    publication_id = create_publication()["id"]
-
-    claimed = client.post(
-        f"/content/publications/{publication_id}/claim",
-        json={"worker_id": "worker-a"},
-        headers=HEADERS,
-    )
+    publication = create_publication()
+    publication_id = publication["id"]
+    claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
     assert claimed.status_code == 200
-
-    retried = client.post(
-        f"/content/publications/{publication_id}/fail",
-        json={"worker_id": "worker-a", "error_message": "temporary", "retry_delay_seconds": 1},
-        headers=HEADERS,
-    )
+    retried = client.post(f"/content/publications/{publication_id}/fail", json={"worker_id": "worker-a", "error_message": "temporary", "retry_delay_seconds": 1}, headers=HEADERS)
     assert retried.status_code == 200
     assert retried.json()["status"] == "scheduled"
     assert retried.json()["attempt_count"] == 1
     assert retried.json()["next_attempt_at"] is not None
-
-    claimed_again = client.post(
-        f"/content/publications/{publication_id}/claim",
-        json={"worker_id": "worker-b"},
-        headers=HEADERS,
-    )
-    assert claimed_again.status_code == 409
+    assert client.get(f"/content/contents/{publication['content_id']}/transitions", headers=HEADERS).json()["status"] == "scheduled"
 
 
 def test_stale_processing_claim_can_be_recovered():
     publication_id = create_publication()["id"]
-    claimed = client.post(
-        f"/content/publications/{publication_id}/claim",
-        json={"worker_id": "dead-worker"},
-        headers=HEADERS,
-    )
+    claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "dead-worker"}, headers=HEADERS)
     assert claimed.status_code == 200
-
     db = TestingSession()
     try:
         publication = db.query(Publication).filter(Publication.id == publication_id).one()
@@ -183,16 +119,13 @@ def test_stale_processing_claim_can_be_recovered():
         db.commit()
     finally:
         db.close()
-
-    recovered = client.post(
-        "/content/publications/recover-stale?stale_after_seconds=60",
-        headers=HEADERS,
-    )
+    recovered = client.post("/content/publications/recover-stale?stale_after_seconds=60", headers=HEADERS)
     assert recovered.status_code == 200
     item = next(item for item in recovered.json() if item["id"] == publication_id)
     assert item["status"] == "scheduled"
     assert item["worker_id"] is None
     assert item["processing_started_at"] is None
+    assert client.get(f"/content/contents/{item['content_id']}/transitions", headers=HEADERS).json()["status"] == "scheduled"
 
 
 def test_service_token_is_required():
