@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -24,7 +24,7 @@ class WorkspaceCreate(BaseModel):
 class WorkspaceOut(WorkspaceCreate):
     id: int
     created_at: datetime
-    class Config: orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChannelCreate(BaseModel):
@@ -39,7 +39,7 @@ class ChannelOut(ChannelCreate):
     id: int
     is_active: bool
     created_at: datetime
-    class Config: orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ContentCreate(BaseModel):
@@ -61,7 +61,7 @@ class ContentOut(BaseModel):
     created_by: Optional[int]
     created_at: datetime
     updated_at: datetime
-    class Config: orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ContentVersionOut(BaseModel):
@@ -72,7 +72,7 @@ class ContentVersionOut(BaseModel):
     source: str
     created_by: Optional[int]
     created_at: datetime
-    class Config: orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PublicationCreate(BaseModel):
@@ -99,7 +99,7 @@ class PublicationOut(BaseModel):
     idempotency_key: str
     error_message: Optional[str]
     created_at: datetime
-    class Config: orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PublicationReadyOut(PublicationOut):
@@ -150,7 +150,7 @@ def transition_content(db: Session, content: Content, target: str) -> None:
 
 def publication_ready_out(publication: Publication) -> PublicationReadyOut:
     return PublicationReadyOut(
-        **PublicationOut.from_orm(publication).dict(),
+        **PublicationOut.model_validate(publication).model_dump(),
         content_body=publication.content.body,
         channel_platform=publication.channel.platform,
         channel_external_id=publication.channel.external_id,
@@ -180,7 +180,7 @@ def list_workspaces(db: Session = Depends(get_db)):
 def create_channel(payload: ChannelCreate, db: Session = Depends(get_db)):
     if not db.query(Workspace).filter(Workspace.id == payload.workspace_id).first():
         raise HTTPException(404, "Workspace not found")
-    channel = Channel(**payload.dict())
+    channel = Channel(**payload.model_dump())
     db.add(channel)
     try:
         db.flush()
@@ -227,7 +227,7 @@ def list_contents(workspace_id: Optional[int] = None, db: Session = Depends(get_
     query = db.query(Content)
     if workspace_id is not None:
         query = query.filter(Content.workspace_id == workspace_id)
-    return query.order_by(Content.updated_at.desc()).all()
+    return query.order_by(Content.id.desc()).all()
 
 
 @router.get("/contents/{content_id}/versions", response_model=List[ContentVersionOut], dependencies=[Depends(require_service_token)])
@@ -338,9 +338,11 @@ def claim_publication(publication_id: int, payload: PublicationClaim, db: Sessio
             raise HTTPException(404, "Publication not found")
         raise HTTPException(409, "Publication is not claimable")
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
-    sync_content_status(db, publication.content)
+    if publication.content.status != "publishing":
+        transition_content(db, publication.content, "publishing")
     db.commit()
-    return db.query(Publication).filter(Publication.id == publication_id).first()
+    db.refresh(publication)
+    return publication
 
 
 @router.post("/publications/{publication_id}/heartbeat", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
