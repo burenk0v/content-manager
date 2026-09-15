@@ -3,6 +3,7 @@
 Revision ID: 0007_publication_lease_heartbeat
 Revises: 0006_publication_processing_lease
 """
+import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
@@ -22,7 +23,7 @@ def upgrade():
         return
     columns = {column["name"] for column in inspector.get_columns("publications")}
     if COLUMN_NAME not in columns:
-        op.add_column("publications", op.f(COLUMN_NAME))
+        op.add_column("publications", sa.Column(COLUMN_NAME, sa.DateTime(), nullable=True))
     indexes = {index["name"] for index in inspector.get_indexes("publications")}
     if INDEX_NAME not in indexes:
         op.create_index(INDEX_NAME, "publications", [COLUMN_NAME], unique=False)
