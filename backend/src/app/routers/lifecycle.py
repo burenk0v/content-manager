@@ -1,11 +1,10 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-
 import os
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
 
 from src.app.content_lifecycle import CONTENT_TRANSITIONS, transition_or_raise
 from src.app.db import get_db
@@ -25,8 +24,7 @@ class ContentTransitionOut(BaseModel):
     status: str
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
