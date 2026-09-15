@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -106,10 +107,12 @@ class PublicationClaim(BaseModel):
 
 class PublicationComplete(BaseModel):
     worker_id: str = Field(..., min_length=1, max_length=200)
+    processing_token: str = Field(..., min_length=1, max_length=64)
     external_id: str = Field(..., min_length=1, max_length=255)
 
 class PublicationFail(BaseModel):
     worker_id: str = Field(..., min_length=1, max_length=200)
+    processing_token: str = Field(..., min_length=1, max_length=64)
     error_message: str = Field(..., min_length=1, max_length=4000)
     retry: bool = True
     max_attempts: int = Field(5, ge=1, le=20)
@@ -128,23 +131,14 @@ def audit(db: Session, workspace_id: int, entity_type: str, entity_id: int, acti
 
 def publication_ready_out(publication: Publication) -> PublicationReadyOut:
     return PublicationReadyOut(
-        id=publication.id,
-        content_id=publication.content_id,
-        channel_id=publication.channel_id,
-        source_draft_id=publication.source_draft_id,
-        status=publication.status,
-        scheduled_at=publication.scheduled_at,
-        published_at=publication.published_at,
-        processing_started_at=publication.processing_started_at,
-        next_attempt_at=publication.next_attempt_at,
-        attempt_count=publication.attempt_count,
-        worker_id=publication.worker_id,
-        external_id=publication.external_id,
-        idempotency_key=publication.idempotency_key,
-        error_message=publication.error_message,
-        created_at=publication.created_at,
-        content_body=publication.content.body,
-        channel_platform=publication.channel.platform,
+        id=publication.id, content_id=publication.content_id, channel_id=publication.channel_id,
+        source_draft_id=publication.source_draft_id, status=publication.status,
+        scheduled_at=publication.scheduled_at, published_at=publication.published_at,
+        processing_started_at=publication.processing_started_at, next_attempt_at=publication.next_attempt_at,
+        attempt_count=publication.attempt_count, worker_id=publication.worker_id,
+        external_id=publication.external_id, idempotency_key=publication.idempotency_key,
+        error_message=publication.error_message, created_at=publication.created_at,
+        content_body=publication.content.body, channel_platform=publication.channel.platform,
         channel_external_id=publication.channel.external_id,
     )
 
@@ -165,10 +159,8 @@ def create_workspace(payload: WorkspaceCreate, db: Session = Depends(get_db)):
     if db.query(Workspace).filter(Workspace.slug == slug).first():
         raise HTTPException(409, "Workspace slug already exists")
     workspace = Workspace(name=payload.name.strip(), slug=slug)
-    db.add(workspace); db.flush()
-    audit(db, workspace.id, "workspace", workspace.id, "created")
-    db.commit(); db.refresh(workspace)
-    return workspace
+    db.add(workspace); db.flush(); audit(db, workspace.id, "workspace", workspace.id, "created")
+    db.commit(); db.refresh(workspace); return workspace
 
 @router.get("/workspaces", response_model=List[WorkspaceOut], dependencies=[Depends(require_service_token)])
 def list_workspaces(db: Session = Depends(get_db)):
@@ -179,10 +171,8 @@ def create_channel(payload: ChannelCreate, db: Session = Depends(get_db)):
     if not db.query(Workspace).filter(Workspace.id == payload.workspace_id).first():
         raise HTTPException(404, "Workspace not found")
     channel = Channel(**payload.dict())
-    db.add(channel); db.flush()
-    audit(db, channel.workspace_id, "channel", channel.id, "created")
-    db.commit(); db.refresh(channel)
-    return channel
+    db.add(channel); db.flush(); audit(db, channel.workspace_id, "channel", channel.id, "created")
+    db.commit(); db.refresh(channel); return channel
 
 @router.get("/channels", response_model=List[ChannelOut], dependencies=[Depends(require_service_token)])
 def list_channels(workspace_id: Optional[int] = None, db: Session = Depends(get_db)):
@@ -198,8 +188,7 @@ def create_content(payload: ContentCreate, db: Session = Depends(get_db)):
     db.add(content); db.flush()
     db.add(ContentVersion(content_id=content.id, version=1, body=payload.body, source=payload.source, created_by=payload.created_by))
     audit(db, content.workspace_id, "content", content.id, "created")
-    db.commit(); db.refresh(content)
-    return content
+    db.commit(); db.refresh(content); return content
 
 @router.get("/contents", response_model=List[ContentOut], dependencies=[Depends(require_service_token)])
 def list_contents(workspace_id: Optional[int] = None, db: Session = Depends(get_db)):
@@ -216,20 +205,16 @@ def list_content_versions(content_id: int, db: Session = Depends(get_db)):
 @router.post("/publications/from-draft/{draft_id}", response_model=PublicationOut, status_code=201, dependencies=[Depends(require_service_token)])
 def create_publication_from_draft(draft_id: int, db: Session = Depends(get_db)):
     draft = db.query(PostDraft).filter(PostDraft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(404, "Draft not found")
+    if not draft: raise HTTPException(404, "Draft not found")
     if draft.status not in {"pending", "scheduled"}:
         existing = db.query(Publication).filter(Publication.source_draft_id == draft_id).first()
-        if existing:
-            return existing
+        if existing: return existing
         raise HTTPException(409, "Draft is not publishable")
     schedule = db.query(PublicationSchedule).filter(PublicationSchedule.id == draft.schedule_id).first()
-    if not schedule:
-        raise HTTPException(404, "Schedule not found")
+    if not schedule: raise HTTPException(404, "Schedule not found")
     key = f"draft:{draft.id}:publication"
     existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
-    if existing:
-        return existing
+    if existing: return existing
     workspace = db.query(Workspace).filter(Workspace.slug == "telegram-default").first()
     if not workspace:
         workspace = Workspace(name="Telegram", slug="telegram-default")
@@ -243,10 +228,8 @@ def create_publication_from_draft(draft_id: int, db: Session = Depends(get_db)):
     db.add(ContentVersion(content_id=content.id, version=1, body=draft.generated_text, source="ai", created_by=None))
     publication = Publication(content_id=content.id, channel_id=channel.id, source_draft_id=draft.id, status="scheduled", idempotency_key=key)
     db.add(publication); db.flush()
-    audit(db, workspace.id, "content", content.id, "scheduled")
-    audit(db, workspace.id, "publication", publication.id, "scheduled")
-    db.commit(); db.refresh(publication)
-    return publication
+    audit(db, workspace.id, "content", content.id, "scheduled"); audit(db, workspace.id, "publication", publication.id, "scheduled")
+    db.commit(); db.refresh(publication); return publication
 
 @router.post("/publications", response_model=PublicationOut, status_code=201, dependencies=[Depends(require_service_token)])
 def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)):
@@ -267,20 +250,13 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     except IntegrityError:
         db.rollback()
         existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
-        if existing:
-            return existing
-        duplicate = db.query(Publication).filter(
-            Publication.content_id == payload.content_id,
-            Publication.channel_id == payload.channel_id,
-        ).first()
-        if duplicate:
-            raise HTTPException(409, "Publication already exists for this content and channel")
+        if existing: return existing
+        duplicate = db.query(Publication).filter(Publication.content_id == payload.content_id, Publication.channel_id == payload.channel_id).first()
+        if duplicate: raise HTTPException(409, "Publication already exists for this content and channel")
         raise
-    if content.status == "approved":
-        transition_content(db, content, "scheduled")
+    if content.status == "approved": transition_content(db, content, "scheduled")
     audit(db, content.workspace_id, "publication", publication.id, "scheduled")
-    db.commit(); db.refresh(publication)
-    return publication
+    db.commit(); db.refresh(publication); return publication
 
 @router.get("/publications/ready", response_model=List[PublicationReadyOut], dependencies=[Depends(require_service_token)])
 def list_ready_publications(limit: int = 20, db: Session = Depends(get_db)):
@@ -299,7 +275,7 @@ def recover_stale_publications(stale_after_seconds: int = 900, db: Session = Dep
     cutoff = datetime.utcnow() - timedelta(seconds=max(60, min(stale_after_seconds, 86400)))
     stale = db.query(Publication).filter(Publication.status == "processing", Publication.processing_started_at.is_not(None), Publication.processing_started_at < cutoff).all()
     for publication in stale:
-        publication.status = "scheduled"; publication.next_attempt_at = datetime.utcnow(); publication.processing_started_at = None; publication.worker_id = None; publication.error_message = "Recovered stale processing claim"
+        publication.status = "scheduled"; publication.next_attempt_at = datetime.utcnow(); publication.processing_started_at = None; publication.processing_token = None; publication.worker_id = None; publication.error_message = "Recovered stale processing claim"
         sync_content_status(db, publication.content)
     if stale:
         db.commit()
@@ -308,24 +284,23 @@ def recover_stale_publications(stale_after_seconds: int = 900, db: Session = Dep
 
 @router.post("/publications/{publication_id}/claim", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def claim_publication(publication_id: int, payload: PublicationClaim, db: Session = Depends(get_db)):
-    now = datetime.utcnow()
+    now = datetime.utcnow(); processing_token = uuid.uuid4().hex
     eligible = and_(or_(Publication.scheduled_at.is_(None), Publication.scheduled_at <= now), or_(Publication.next_attempt_at.is_(None), Publication.next_attempt_at <= now))
-    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "scheduled", eligible).values(status="processing", processing_started_at=now, worker_id=payload.worker_id, attempt_count=Publication.attempt_count + 1, error_message=None))
+    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "scheduled", eligible).values(status="processing", processing_started_at=now, processing_token=processing_token, worker_id=payload.worker_id, attempt_count=Publication.attempt_count + 1, error_message=None))
     if result.rowcount != 1:
         db.rollback(); publication = db.query(Publication).filter(Publication.id == publication_id).first()
         if not publication: raise HTTPException(404, "Publication not found")
         raise HTTPException(409, "Publication is not claimable")
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
-    sync_content_status(db, publication.content)
-    db.commit()
+    sync_content_status(db, publication.content); db.commit()
     return db.query(Publication).filter(Publication.id == publication_id).first()
 
 @router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def complete_publication(publication_id: int, payload: PublicationComplete, db: Session = Depends(get_db)):
     now = datetime.utcnow()
-    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id).values(status="published", published_at=now, external_id=payload.external_id, processing_started_at=None, next_attempt_at=None))
+    result = db.execute(update(Publication).where(Publication.id == publication_id, Publication.status == "processing", Publication.worker_id == payload.worker_id, Publication.processing_token == payload.processing_token).values(status="published", published_at=now, external_id=payload.external_id, processing_started_at=None, processing_token=None, next_attempt_at=None, worker_id=None))
     if result.rowcount != 1:
-        db.rollback(); raise HTTPException(409, "Publication is not owned by this worker")
+        db.rollback(); raise HTTPException(409, "Publication claim is no longer owned by this worker")
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
     channel = db.query(Channel).filter(Channel.id == publication.channel_id).first()
     sync_content_status(db, publication.content)
@@ -333,22 +308,20 @@ def complete_publication(publication_id: int, payload: PublicationComplete, db: 
         draft = db.query(PostDraft).filter(PostDraft.id == publication.source_draft_id).first()
         if draft: draft.status = "published"
     audit(db, channel.workspace_id, "publication", publication.id, "published")
-    db.commit(); db.refresh(publication)
-    return publication
+    db.commit(); db.refresh(publication); return publication
 
 @router.post("/publications/{publication_id}/fail", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def fail_publication(publication_id: int, payload: PublicationFail, db: Session = Depends(get_db)):
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
     if not publication: raise HTTPException(404, "Publication not found")
-    if publication.status != "processing" or publication.worker_id != payload.worker_id: raise HTTPException(409, "Publication is not owned by this worker")
+    if publication.status != "processing" or publication.worker_id != payload.worker_id or publication.processing_token != payload.processing_token:
+        raise HTTPException(409, "Publication claim is no longer owned by this worker")
     retry = payload.retry and publication.attempt_count < payload.max_attempts
     if retry:
-        publication.status = "scheduled"; publication.next_attempt_at = datetime.utcnow() + timedelta(seconds=payload.retry_delay_seconds); publication.processing_started_at = None; action = "retry_scheduled"
+        publication.status = "scheduled"; publication.next_attempt_at = datetime.utcnow() + timedelta(seconds=payload.retry_delay_seconds); action = "retry_scheduled"
     else:
-        publication.status = "failed"; publication.next_attempt_at = None; publication.processing_started_at = None; action = "failed"
-    publication.error_message = payload.error_message; publication.worker_id = None
+        publication.status = "failed"; publication.next_attempt_at = None; action = "failed"
+    publication.error_message = payload.error_message; publication.worker_id = None; publication.processing_started_at = None; publication.processing_token = None
     channel = db.query(Channel).filter(Channel.id == publication.channel_id).first()
-    sync_content_status(db, publication.content)
-    audit(db, channel.workspace_id, "publication", publication.id, action)
-    db.commit(); db.refresh(publication)
-    return publication
+    sync_content_status(db, publication.content); audit(db, channel.workspace_id, "publication", publication.id, action)
+    db.commit(); db.refresh(publication); return publication
