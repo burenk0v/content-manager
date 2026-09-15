@@ -6,6 +6,18 @@ from sqlalchemy.orm import relationship
 from .db import Base
 
 
+CONTENT_STATUSES = (
+    "draft",
+    "review",
+    "approved",
+    "scheduled",
+    "publishing",
+    "published",
+    "failed",
+    "archived",
+)
+
+
 class User(Base):
     __tablename__ = 'users'
     id = Column(Integer, primary_key=True, index=True)
@@ -21,7 +33,6 @@ class Workspace(Base):
     name = Column(String, nullable=False)
     slug = Column(String, unique=True, index=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
     channels = relationship('Channel', back_populates='workspace', cascade='all, delete-orphan')
     contents = relationship('Content', back_populates='workspace', cascade='all, delete-orphan')
 
@@ -37,7 +48,6 @@ class Channel(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = (UniqueConstraint('platform', 'external_id', name='uq_channels_platform_external_id'),)
-
     workspace = relationship('Workspace', back_populates='channels')
     publications = relationship('Publication', back_populates='channel')
 
@@ -85,7 +95,6 @@ class PublicationSchedule(Base):
     last_run = Column(DateTime, nullable=True)
     force_run_requested_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-
     prompt = relationship('Prompt', foreign_keys=[prompt_id])
     assistant_template = relationship('AssistantMessageTemplate', foreign_keys=[assistant_template_id])
 
@@ -101,7 +110,6 @@ class Content(Base):
     created_by = Column(Integer, ForeignKey('users.id'), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
     workspace = relationship('Workspace', back_populates='contents')
     author = relationship('User')
     versions = relationship('ContentVersion', back_populates='content', cascade='all, delete-orphan', order_by='ContentVersion.version')
@@ -118,7 +126,6 @@ class ContentVersion(Base):
     created_by = Column(Integer, ForeignKey('users.id'), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = (UniqueConstraint('content_id', 'version', name='uq_content_versions_content_version'),)
-
     content = relationship('Content', back_populates='versions')
     author = relationship('User')
 
@@ -140,7 +147,6 @@ class Publication(Base):
     idempotency_key = Column(String, unique=True, nullable=False)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
     content = relationship('Content', back_populates='publications')
     channel = relationship('Channel', back_populates='publications')
     source_draft = relationship('PostDraft')
@@ -169,6 +175,5 @@ class PostDraft(Base):
     status = Column(String, nullable=False, default='pending', index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
     topic = relationship('Topic')
     schedule = relationship('PublicationSchedule')
