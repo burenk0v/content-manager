@@ -130,6 +130,12 @@ class PublicationFail(PublicationLease):
     retry: bool = True
 
 
+class PublicationReconciliation(BaseModel):
+    outcome: str = Field(..., pattern="^(published|retry)$")
+    external_id: Optional[str] = Field(None, min_length=1, max_length=255)
+    error_message: Optional[str] = Field(None, min_length=1, max_length=4000)
+
+
 def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
     import os
     expected = os.environ.get("SERVICE_ACCOUNT_TOKEN")
@@ -322,3 +328,16 @@ def complete_publication(publication_id: int, payload: PublicationComplete, db: 
 @router.post("/publications/{publication_id}/fail", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def fail_publication(publication_id: int, payload: PublicationFail, db: Session = Depends(get_db)):
     return publication_out(publication_service.fail(db, publication_id, payload.worker_id, payload.processing_token, payload.error_message, payload.retry))
+
+
+@router.post("/publications/{publication_id}/reconcile", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+def reconcile_publication(publication_id: int, payload: PublicationReconciliation, db: Session = Depends(get_db)):
+    return publication_out(
+        publication_service.reconcile_unknown(
+            db,
+            publication_id,
+            payload.outcome,
+            payload.external_id,
+            payload.error_message,
+        )
+    )
