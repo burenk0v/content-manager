@@ -7,5 +7,6 @@ alembic
 pydantic
 psycopg2-binary
 pytest
+pytest-asyncio
 httpx
 openai
