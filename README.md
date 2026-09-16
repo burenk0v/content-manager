@@ -6,7 +6,7 @@ Content Manager is a Docker-based project with three main services for managing 
 
 This system provides:
 
-- **REST API** (FastAPI backend) for content management, AI generation, and scheduled posting
+- **REST API** (FastAPI backend) for content management, AI generation, channel transformation, and scheduled posting
 - **Admin Dashboard** (Django frontend) for UI management
 - **Telegram Bot** (Aiogram) for admin commands and scheduled publishing
 - **PostgreSQL Database** for persistent data storage
@@ -40,11 +40,12 @@ This system provides:
   - `GET /` — service status
   - `GET /health/db` — database connectivity check
   - `GET /docs` — Swagger API documentation
-  - `/content/*` — content lifecycle, planning, publication, and generation endpoints
+  - `/content/*` — content lifecycle, planning, publication, generation, and channel-variant endpoints
 - **Features**:
   - SQLAlchemy ORM with PostgreSQL
   - Versioned content as the canonical content representation
   - AI generation with persisted generation runs
+  - AI channel transformation with immutable variant history
   - Explicit content state machine and approval workflow
   - Provider-aware publication execution
   - Authentication via `SERVICE_ACCOUNT_TOKEN`
@@ -95,9 +96,10 @@ Required configuration:
 | `SECRET_KEY` | — | Django/backend secret key |
 | `BOT_TOKEN` | — | Used as initial value for per-user UI Telegram settings |
 | `ADMINS` | — | Used as initial value for per-user UI Telegram settings |
-| `OPENAI_API_KEY` | — | OpenAI API key for backend AI generation |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Default model for backend AI generation |
+| `OPENAI_API_KEY` | — | OpenAI API key for backend AI generation and transformation |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Default model for backend AI generation and transformation |
 | `AI_GENERATION_PROVIDER` | `openai` | Backend generation provider |
+| `AI_TRANSFORMATION_PROVIDER` | `AI_GENERATION_PROVIDER` | Provider for channel-specific transformation |
 | `WEBAPP_URL` | `https://example.com` | Used as initial value for per-user UI Telegram settings |
 | `SCHEDULE_CHECK_INTERVAL_SECONDS` | `10` | Used as initial value for per-user UI Telegram settings |
 | `PUBLICATION_WORKER_ID` | `telegram:<hostname>` | Stable worker identity used for publication leases |
@@ -132,6 +134,19 @@ Regeneration never overwrites an existing version. When generation happens from 
 
 Generation providers are isolated behind a small backend contract. The current production provider is OpenAI. Provider failures are persisted as failed generation runs and do not create a partial content version.
 
+## Channel Transformation
+
+The canonical `ContentVersion` is channel-neutral. Before publication, the same source version can be transformed into channel-specific `ContentVariant` records.
+
+A variant is immutable history for one source version and channel. Re-transforming creates the next variant version rather than overwriting the previous result. Variants start in `draft` so a human can preview and approve the channel-specific copy before publication wiring consumes it.
+
+### Variant API
+
+- `POST /content/contents/{content_id}/variants/{channel_id}/transform` — transform the latest content version, or an explicitly selected source version
+- `GET /content/contents/{content_id}/variants` — inspect variants, optionally filtered by channel or source version
+
+The transformer is provider-neutral. OpenAI is the current implementation and can be replaced without changing the variant data model or API contract. The target channel platform and content language are supplied to the transformer so channel-specific formatting can be applied without mutating canonical content.
+
 ## Publication Execution Model
 
 A publication is claimed by exactly one worker using a processing token and lease heartbeat. Provider adapters are isolated behind a typed contract and selected through the provider registry.
@@ -156,5 +171,6 @@ Telegram currently supports publication but does not provide a safe provider-sid
 - **Content Lifecycle**: Content status transitions are validated by a dedicated domain state machine
 - **Content Versions**: Versions are immutable and publications pin the exact version they publish
 - **Generation History**: Every AI generation attempt is persisted with provider, model, prompt, status, and resulting version
+- **Channel Variants**: Channel transformations are versioned per source content version and channel; canonical content remains untouched
 - **Publication Identity**: Each publication has a provider operation key separate from its database idempotency key
 - **Provider Safety**: Ambiguous provider outcomes never trigger an automatic blind replay

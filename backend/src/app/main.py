@@ -8,6 +8,7 @@ from src.app.routers import auth
 from src.app.routers import foundation
 from src.app.routers import lifecycle
 from src.app.routers import planning
+from src.app.routers import variants
 
 
 app = FastAPI(title="Content Manager API", version="0.1.0")
@@ -18,6 +19,7 @@ app.include_router(foundation.router, prefix="/content", tags=["content-lifecycl
 app.include_router(lifecycle.router, prefix="/content", tags=["content-state"])
 app.include_router(planning.router, prefix="/content", tags=["content-planning"])
 app.include_router(ai.router, prefix="/content", tags=["content-generation"])
+app.include_router(variants.router, prefix="/content", tags=["content-variants"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
 
 

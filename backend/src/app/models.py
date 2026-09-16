@@ -43,6 +43,7 @@ class Channel(Base):
     __table_args__ = (UniqueConstraint("platform", "external_id", name="uq_channels_platform_external_id"),)
     workspace = relationship("Workspace", back_populates="channels")
     publications = relationship("Publication", back_populates="channel")
+    variants = relationship("ContentVariant", back_populates="channel", cascade="all, delete-orphan")
 
 
 class Content(Base):
@@ -60,6 +61,7 @@ class Content(Base):
     versions = relationship("ContentVersion", back_populates="content", cascade="all, delete-orphan", order_by="ContentVersion.version")
     publications = relationship("Publication", back_populates="content", cascade="all, delete-orphan")
     generation_runs = relationship("GenerationRun", back_populates="content", cascade="all, delete-orphan")
+    variants = relationship("ContentVariant", back_populates="content", cascade="all, delete-orphan")
 
     @property
     def body(self) -> str:
@@ -87,6 +89,7 @@ class ContentVersion(Base):
     content = relationship("Content", back_populates="versions")
     author = relationship("User")
     publications = relationship("Publication", back_populates="content_version")
+    variants = relationship("ContentVariant", back_populates="content_version", cascade="all, delete-orphan")
 
 
 class GenerationRun(Base):
@@ -103,6 +106,24 @@ class GenerationRun(Base):
     completed_at = Column(DateTime, nullable=True)
     content = relationship("Content", back_populates="generation_runs")
     content_version = relationship("ContentVersion")
+
+
+class ContentVariant(Base):
+    __tablename__ = "content_variants"
+    id = Column(Integer, primary_key=True, index=True)
+    content_id = Column(Integer, ForeignKey("contents.id", ondelete="CASCADE"), nullable=False, index=True)
+    content_version_id = Column(Integer, ForeignKey("content_versions.id", ondelete="CASCADE"), nullable=False, index=True)
+    channel_id = Column(Integer, ForeignKey("channels.id", ondelete="CASCADE"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    body = Column(Text, nullable=False)
+    provider = Column(String, nullable=False)
+    model = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="draft", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("content_version_id", "channel_id", "version", name="uq_content_variants_source_channel_version"),)
+    content = relationship("Content", back_populates="variants")
+    content_version = relationship("ContentVersion", back_populates="variants")
+    channel = relationship("Channel", back_populates="variants")
 
 
 class Publication(Base):

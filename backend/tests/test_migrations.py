@@ -37,6 +37,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
         "publication_operations",
         "audit_logs",
         "generation_runs",
+        "content_variants",
     }
     assert not tables.intersection({
         "topics",
@@ -80,13 +81,31 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
         "completed_at",
     } <= generation_columns
 
-    generation_indexes = {index["name"]: index for index in inspector.get_indexes("generation_runs")}
+    generation_indexes = {index["name"] for index in inspector.get_indexes("generation_runs")}
     assert "ix_generation_runs_content_id" in generation_indexes
     assert "ix_generation_runs_status" in generation_indexes
 
+    variant_columns = {column["name"] for column in inspector.get_columns("content_variants")}
+    assert {
+        "content_id",
+        "content_version_id",
+        "channel_id",
+        "version",
+        "body",
+        "provider",
+        "model",
+        "status",
+        "created_at",
+    } <= variant_columns
+    variant_indexes = {index["name"] for index in inspector.get_indexes("content_variants")}
+    assert "ix_content_variants_content_id" in variant_indexes
+    assert "ix_content_variants_content_version_id" in variant_indexes
+    assert "ix_content_variants_channel_id" in variant_indexes
+    assert "ix_content_variants_status" in variant_indexes
+
     with engine.connect() as connection:
         version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-    assert version == "0002_generation_runs"
+    assert version == "0003_content_variants"
 
 
 def test_alembic_can_downgrade_fresh_schema_to_base(tmp_path):
