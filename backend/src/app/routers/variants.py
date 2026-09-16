@@ -6,11 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from src.app.audit import audit
-from src.app.content_transformation import TransformationRequest, get_content_transformer
 from src.app.db import get_db
-from src.app.models import Channel, Content, ContentVariant, ContentVersion
 from src.app.routers.foundation import require_service_token
+from src.app.services.variant_service import (
+    VariantConflict,
+    VariantNotFound,
+    VariantProviderFailure,
+    list_variants as list_variants_service,
+    transform_content as transform_content_service,
+)
 
 router = APIRouter()
 
@@ -47,82 +51,24 @@ def transform_content(
     payload: TransformContent,
     db: Session = Depends(get_db),
 ):
-    content = db.query(Content).filter(Content.id == content_id).first()
-    if not content:
-        raise HTTPException(404, "Content not found")
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
-    if not channel:
-        raise HTTPException(404, "Channel not found")
-    if channel.workspace_id != content.workspace_id:
-        raise HTTPException(409, "Channel belongs to another workspace")
-    if not channel.is_active:
-        raise HTTPException(409, "Channel is inactive")
-
-    if payload.content_version_id is None:
-        source_version = content.current_version
-    else:
-        source_version = (
-            db.query(ContentVersion)
-            .filter(ContentVersion.id == payload.content_version_id, ContentVersion.content_id == content.id)
-            .first()
-        )
-        if not source_version:
-            raise HTTPException(404, "Content version not found")
-
-    latest = (
-        db.query(ContentVariant)
-        .filter(
-            ContentVariant.content_version_id == source_version.id,
-            ContentVariant.channel_id == channel.id,
-        )
-        .order_by(ContentVariant.version.desc(), ContentVariant.id.desc())
-        .first()
-    )
-    variant_number = (latest.version + 1) if latest else 1
-
     try:
-        transformer = get_content_transformer()
-        body = transformer.transform(
-            TransformationRequest(
-                body=source_version.body,
-                platform=channel.platform,
-                language=content.language,
-                instructions=payload.instructions,
-                model=payload.model,
-            )
+        variant = transform_content_service(
+            db,
+            content_id,
+            channel_id,
+            content_version_id=payload.content_version_id,
+            instructions=payload.instructions,
+            model=payload.model,
         )
-    except Exception as exc:
+    except VariantNotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except VariantConflict as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from exc
+    except VariantProviderFailure as exc:
         db.rollback()
         raise HTTPException(502, str(exc)) from exc
 
-    variant = ContentVariant(
-        content_id=content.id,
-        content_version_id=source_version.id,
-        channel_id=channel.id,
-        version=variant_number,
-        body=body,
-        provider=transformer.name,
-        model=payload.model,
-        status="draft",
-    )
-    db.add(variant)
-    db.flush()
-    audit(
-        db,
-        content.workspace_id,
-        "content_variant",
-        variant.id,
-        "created",
-        event_type="content_variant.created",
-        metadata={
-            "content_id": content.id,
-            "content_version_id": source_version.id,
-            "channel_id": channel.id,
-            "platform": channel.platform,
-            "version": variant.version,
-            "provider": transformer.name,
-        },
-    )
     db.commit()
     db.refresh(variant)
     return variant
@@ -139,11 +85,12 @@ def list_variants(
     content_version_id: int | None = None,
     db: Session = Depends(get_db),
 ):
-    if not db.query(Content).filter(Content.id == content_id).first():
-        raise HTTPException(404, "Content not found")
-    query = db.query(ContentVariant).filter(ContentVariant.content_id == content_id)
-    if channel_id is not None:
-        query = query.filter(ContentVariant.channel_id == channel_id)
-    if content_version_id is not None:
-        query = query.filter(ContentVariant.content_version_id == content_version_id)
-    return query.order_by(ContentVariant.created_at.desc(), ContentVariant.id.desc()).limit(200).all()
+    try:
+        return list_variants_service(
+            db,
+            content_id,
+            channel_id=channel_id,
+            content_version_id=content_version_id,
+        )
+    except VariantNotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
