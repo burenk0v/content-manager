@@ -7,7 +7,8 @@ from fastapi import HTTPException
 from sqlalchemy import and_, or_, update
 from sqlalchemy.orm import Session
 
-from src.app.models import AuditLog, Content, Publication
+from src.app.audit import audit
+from src.app.models import Content, Publication
 from src.app.observability import publication_event
 from src.app.publication_state import sync_content_status
 
@@ -46,18 +47,23 @@ def retry_delay_seconds(attempt_count: int) -> int:
     return min(cap, base * (2 ** max(0, attempt_count - 1)))
 
 
-def audit(db: Session, workspace_id: int, entity_type: str, entity_id: int, action: str) -> None:
-    db.add(AuditLog(workspace_id=workspace_id, entity_type=entity_type, entity_id=entity_id, action=action))
-
-
 def transition_content(db: Session, content: Content, target: str) -> None:
     if content.status == target:
         return
     from src.app.domain.content_state_machine import transition
-    transition(content.status, target)
+    previous_status = content.status
+    transition(previous_status, target)
     content.status = target
     content.updated_at = datetime.utcnow()
-    audit(db, content.workspace_id, "content", content.id, "status_changed")
+    audit(
+        db,
+        content.workspace_id,
+        "content",
+        content.id,
+        "status_changed",
+        event_type="content.status_changed",
+        metadata={"from": previous_status, "to": target},
+    )
 
 
 class PublicationEvent(NamedTuple):
@@ -112,6 +118,15 @@ def recover_stale(db: Session) -> list[Publication]:
             operation.last_error = error_message
             operation.updated_at = now
         sync_content_status(db, publication.content)
+        audit(
+            db,
+            publication.channel.workspace_id,
+            "publication",
+            publication.id,
+            "recovered",
+            event_type="publication.recovered",
+            metadata={"status": publication.status, "error_message": error_message},
+        )
         recovered.append(publication)
     if recovered:
         db.commit()
@@ -155,6 +170,15 @@ def claim(db: Session, publication_id: int, worker_id: str) -> Publication:
     operation.updated_at = now
     if publication.content.status != "publishing":
         transition_content(db, publication.content, "publishing")
+    audit(
+        db,
+        publication.channel.workspace_id,
+        "publication",
+        publication.id,
+        "claimed",
+        event_type="publication.claimed",
+        metadata={"worker_id": worker_id, "attempt_count": publication.attempt_count},
+    )
     response = publication
     event = PublicationEvent("claimed", publication.id, publication.status, publication.worker_id, publication.attempt_count)
     db.commit()
@@ -173,6 +197,15 @@ def heartbeat(db: Session, publication_id: int, worker_id: str, processing_token
         db.rollback()
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
     publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
+    audit(
+        db,
+        publication.channel.workspace_id,
+        "publication",
+        publication.id,
+        "heartbeat",
+        event_type="publication.heartbeat",
+        metadata={"worker_id": worker_id},
+    )
     event = PublicationEvent("heartbeat", publication.id, publication.status, publication.worker_id, publication.attempt_count)
     db.commit()
     publication_event(event.event, event.publication_id, status=event.status, worker_id=event.worker_id, attempt_count=event.attempt_count)
@@ -201,7 +234,15 @@ def complete(db: Session, publication_id: int, worker_id: str, processing_token:
         operation.last_error = None
         operation.updated_at = now
     sync_content_status(db, publication.content)
-    audit(db, publication.channel.workspace_id, "publication", publication.id, "published")
+    audit(
+        db,
+        publication.channel.workspace_id,
+        "publication",
+        publication.id,
+        "published",
+        event_type="publication.published",
+        metadata={"external_id": external_id, "worker_id": worker_id, "attempt_count": publication.attempt_count},
+    )
     event = PublicationEvent("completed", publication.id, publication.status, attempt_count=publication.attempt_count)
     db.commit()
     publication_event(event.event, event.publication_id, status=event.status, attempt_count=event.attempt_count)
@@ -235,7 +276,15 @@ def fail(db: Session, publication_id: int, worker_id: str, processing_token: str
         operation.last_error = error_message
         operation.updated_at = now
     sync_content_status(db, publication.content)
-    audit(db, publication.channel.workspace_id, "publication", publication.id, "failed")
+    audit(
+        db,
+        publication.channel.workspace_id,
+        "publication",
+        publication.id,
+        "failed",
+        event_type="publication.failed" if target_status == "failed" else "publication.retry_scheduled",
+        metadata={"worker_id": worker_id, "attempt_count": publication.attempt_count, "retry": target_status == "scheduled", "error_message": error_message},
+    )
     event_name = "retry_scheduled" if target_status == "scheduled" else ("provider_outcome_unknown" if not retry else "failed")
     event = PublicationEvent(event_name, publication.id, publication.status, attempt_count=publication.attempt_count, error=publication.error_message)
     db.commit()
@@ -273,7 +322,15 @@ def reconcile_unknown(
         operation.status = "succeeded"
         operation.external_id = external_id
         operation.last_error = None
-        audit(db, publication.channel.workspace_id, "publication", publication.id, "reconciled_published")
+        audit(
+            db,
+            publication.channel.workspace_id,
+            "publication",
+            publication.id,
+            "reconciled_published",
+            event_type="publication.reconciled_published",
+            metadata={"external_id": external_id},
+        )
         sync_content_status(db, publication.content)
         event_name = "reconciled_published"
     elif outcome == "retry":
@@ -284,7 +341,15 @@ def reconcile_unknown(
         publication.error_message = error_message or "Provider outcome reconciled as retryable"
         operation.status = "pending"
         operation.last_error = publication.error_message
-        audit(db, publication.channel.workspace_id, "publication", publication.id, "reconciled_retry")
+        audit(
+            db,
+            publication.channel.workspace_id,
+            "publication",
+            publication.id,
+            "reconciled_retry",
+            event_type="publication.reconciled_retry",
+            metadata={"error_message": publication.error_message},
+        )
         sync_content_status(db, publication.content)
         event_name = "reconciled_retry"
     else:
