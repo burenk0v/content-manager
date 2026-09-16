@@ -6,6 +6,7 @@ from src.app.routers import audit
 from src.app.routers import auth
 from src.app.routers import foundation
 from src.app.routers import lifecycle
+from src.app.routers import planning
 
 
 app = FastAPI(title="Content Manager API", version="0.1.0")
@@ -14,6 +15,7 @@ app.middleware("http")(request_observability)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(foundation.router, prefix="/content", tags=["content-lifecycle"])
 app.include_router(lifecycle.router, prefix="/content", tags=["content-state"])
+app.include_router(planning.router, prefix="/content", tags=["content-planning"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
 
 
