@@ -3,7 +3,7 @@ from typing import Optional
 import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.app.db import get_db
@@ -23,7 +23,6 @@ class AuditEventOut(BaseModel):
     request_id: Optional[str]
     metadata: Optional[dict]
     created_at: datetime
-    model_config = ConfigDict(from_attributes=True)
 
 
 def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
@@ -53,4 +52,19 @@ def list_audit_events(
         query = query.filter(AuditLog.event_type == event_type)
     if request_id is not None:
         query = query.filter(AuditLog.request_id == request_id)
-    return query.order_by(AuditLog.id.desc()).limit(max(1, min(limit, 200))).all()
+    events = query.order_by(AuditLog.id.desc()).limit(max(1, min(limit, 200))).all()
+    return [
+        AuditEventOut(
+            id=event.id,
+            workspace_id=event.workspace_id,
+            actor_user_id=event.actor_user_id,
+            entity_type=event.entity_type,
+            entity_id=event.entity_id,
+            action=event.action,
+            event_type=event.event_type,
+            request_id=event.request_id,
+            metadata=event.metadata_json,
+            created_at=event.created_at,
+        )
+        for event in events
+    ]
