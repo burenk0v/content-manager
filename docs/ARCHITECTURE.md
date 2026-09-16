@@ -75,7 +75,11 @@ Application services mutate the SQLAlchemy session, while the transport layer co
 
 ## Repository topology
 
-The active backend runtime is rooted at `backend/src/app`. The repository also contains `backend/app`, which holds isolated application/provider worker contracts from the execution-model work. It is not a second HTTP application entry point and must not become one without an explicit architectural decision.
+The active backend runtime is rooted at `backend/src/app`. There is no parallel backend runtime or compatibility application tree.
+
+## Database schema evolution
+
+PostgreSQL schema evolution is managed by Alembic migrations under `backend/migrations`. Migrations are part of the active architecture and must remain the authoritative database schema evolution mechanism. Application startup must not create or mutate the schema through ORM metadata helpers such as `Base.metadata.create_all()`.
 
 ## Architecture freeze
 
