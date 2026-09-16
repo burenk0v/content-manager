@@ -1,11 +1,12 @@
 import os
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from jose import jwt
 from passlib.context import CryptContext
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.app.db import get_db
@@ -13,10 +14,19 @@ from src.app.models import User
 
 router = APIRouter()
 
-SECRET_KEY = os.getenv("BACKEND_SECRET_KEY", "dev-secret-key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
+
+def get_secret_key() -> str:
+    configured = os.getenv("BACKEND_SECRET_KEY")
+    environment = os.getenv("APP_ENV", "development").lower()
+    if environment in {"production", "prod"} and not configured:
+        raise RuntimeError("BACKEND_SECRET_KEY must be configured in production")
+    return configured or secrets.token_urlsafe(48)
+
+
+SECRET_KEY = get_secret_key()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
