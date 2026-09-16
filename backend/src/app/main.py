@@ -1,6 +1,8 @@
 from fastapi import FastAPI
+from fastapi.responses import Response
 
 from src.app import db
+from src.app.metrics import metrics_response
 from src.app.observability import request_observability
 from src.app.routers import ai
 from src.app.routers import audit
@@ -28,9 +30,25 @@ def root():
     return {"status": "Backend running"}
 
 
+@app.get("/health/live")
+def health_live():
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+def health_ready():
+    if db.check_db_connection():
+        return {"status": "ok"}
+    return Response(
+        content='{"detail":"Database unavailable"}',
+        media_type="application/json",
+        status_code=503,
+    )
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return health_live()
 
 
 @app.get("/health/db")
@@ -38,3 +56,9 @@ def health_db():
     if db.check_db_connection():
         return {"status": "ok"}
     return {"status": "failed"}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    payload, content_type = metrics_response()
+    return Response(content=payload, media_type=content_type.split(";", 1)[0])
