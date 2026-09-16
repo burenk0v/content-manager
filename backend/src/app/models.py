@@ -66,6 +66,12 @@ class Content(Base):
             raise ValueError(f"Content {self.id} has no versions")
         return self.versions[-1].body
 
+    @property
+    def current_version(self) -> "ContentVersion":
+        if not self.versions:
+            raise ValueError(f"Content {self.id} has no versions")
+        return self.versions[-1]
+
 
 class ContentVersion(Base):
     __tablename__ = "content_versions"
@@ -79,12 +85,14 @@ class ContentVersion(Base):
     __table_args__ = (UniqueConstraint("content_id", "version", name="uq_content_versions_content_version"),)
     content = relationship("Content", back_populates="versions")
     author = relationship("User")
+    publications = relationship("Publication", back_populates="content_version")
 
 
 class Publication(Base):
     __tablename__ = "publications"
     id = Column(Integer, primary_key=True, index=True)
     content_id = Column(Integer, ForeignKey("contents.id", ondelete="CASCADE"), nullable=False, index=True)
+    content_version_id = Column(Integer, ForeignKey("content_versions.id", ondelete="RESTRICT"), nullable=False, index=True)
     channel_id = Column(Integer, ForeignKey("channels.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String, nullable=False, default="scheduled", index=True)
     scheduled_at = Column(DateTime, nullable=True, index=True)
@@ -101,6 +109,7 @@ class Publication(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = (Index("uq_publications_content_channel", "content_id", "channel_id", unique=True),)
     content = relationship("Content", back_populates="publications")
+    content_version = relationship("ContentVersion", back_populates="publications")
     channel = relationship("Channel", back_populates="publications")
     provider_operation = relationship("PublicationOperation", back_populates="publication", uselist=False, cascade="all, delete-orphan")
 
