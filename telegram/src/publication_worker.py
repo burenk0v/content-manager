@@ -8,13 +8,15 @@ import httpx
 from aiogram import Bot
 
 from providers import PublicationContext, registry
-from providers.base import AmbiguousPublicationError
+from providers.base import AmbiguousPublicationError, ReconciliationResult
+from providers.registry import UnsupportedReconcilerError
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
 WORKER_ID = os.getenv("PUBLICATION_WORKER_ID") or f"telegram:{socket.gethostname()}"
 POLL_INTERVAL_SECONDS = int(os.getenv("PUBLICATION_POLL_INTERVAL_SECONDS", "5"))
 LEASE_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("PUBLICATION_LEASE_HEARTBEAT_INTERVAL_SECONDS", "60"))
+RECONCILIATION_POLL_INTERVAL_SECONDS = int(os.getenv("PUBLICATION_RECONCILIATION_POLL_INTERVAL_SECONDS", "30"))
 
 
 def backend_url(path: str) -> str:
@@ -29,6 +31,12 @@ async def backend_request(method: str, path: str, json: Any | None = None) -> ht
 
 async def fetch_ready_publications() -> list[dict[str, Any]]:
     response = await backend_request("GET", "/content/publications/ready?limit=20")
+    response.raise_for_status()
+    return response.json()
+
+
+async def fetch_unknown_publications() -> list[dict[str, Any]]:
+    response = await backend_request("GET", "/content/publications/unknown?limit=20")
     response.raise_for_status()
     return response.json()
 
@@ -76,6 +84,46 @@ async def fail_publication(publication_id: int, error_message: str, processing_t
         },
     )
     response.raise_for_status()
+
+
+async def reconcile_publication(publication: dict[str, Any], result: ReconciliationResult) -> None:
+    if result.outcome == "unknown":
+        return
+    if result.outcome == "published" and not result.external_id:
+        raise RuntimeError(f"Provider reconciler returned published without external_id for publication {publication['id']}")
+    payload: dict[str, Any] = {
+        "outcome": "published" if result.outcome == "published" else "retry",
+    }
+    if result.external_id:
+        payload["external_id"] = result.external_id
+    if result.outcome == "not_published":
+        payload["error_message"] = "Provider reconciliation confirmed that the publication was not delivered"
+    response = await backend_request("POST", f"/content/publications/{publication['id']}/reconcile", json=payload)
+    response.raise_for_status()
+
+
+async def reconcile_unknown_publication(bot: Bot, publication: dict[str, Any]) -> None:
+    platform = publication.get("channel_platform", "")
+    try:
+        reconciler = registry.get_reconciler(platform, bot=bot)
+    except UnsupportedReconcilerError:
+        logging.info(
+            "Publication %s requires manual provider reconciliation; platform %s has no reconciler",
+            publication["id"],
+            platform,
+        )
+        return
+
+    result = await reconciler.reconcile(
+        PublicationContext(
+            publication_id=publication["id"],
+            provider_operation_key=publication["provider_operation_key"],
+            channel_external_id=publication["channel_external_id"],
+            content_body=publication.get("content_body", ""),
+        )
+    )
+    await reconcile_publication(publication, result)
+    logging.info("Provider reconciliation checked publication %s: %s", publication["id"], result.outcome)
 
 
 async def recover_stale_publications() -> None:
@@ -150,13 +198,27 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
             pass
 
 
+async def reconcile_unknown_queue(bot: Bot) -> None:
+    publications = await fetch_unknown_publications()
+    for publication in publications:
+        try:
+            await reconcile_unknown_publication(bot, publication)
+        except Exception:
+            logging.exception("Failed to reconcile unknown publication %s", publication.get("id"))
+
+
 async def publication_worker(bot: Bot) -> None:
+    reconciliation_tick = 0
     while True:
         try:
             await recover_stale_publications()
             publications = await fetch_ready_publications()
             for publication in publications:
                 await publish_one(bot, publication)
+            reconciliation_tick += POLL_INTERVAL_SECONDS
+            if reconciliation_tick >= max(1, RECONCILIATION_POLL_INTERVAL_SECONDS):
+                await reconcile_unknown_queue(bot)
+                reconciliation_tick = 0
         except Exception:
             logging.exception("Error while processing publication queue")
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
