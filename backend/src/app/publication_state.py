@@ -1,6 +1,8 @@
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
-from src.app.content_lifecycle import transition_or_raise
+from src.app.domain.content_state_machine import transition
 from src.app.models import AuditLog, Content, Publication
 
 
@@ -25,10 +27,9 @@ def sync_content_status(db: Session, content: Content) -> str:
     if content.status == target:
         return target
 
-    transition_or_raise(content.status, target)
+    transition(content.status, target)
     previous = content.status
     content.status = target
-    from datetime import datetime
     content.updated_at = datetime.utcnow()
     db.add(
         AuditLog(
