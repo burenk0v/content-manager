@@ -5,7 +5,7 @@ from typing import Protocol
 @dataclass(frozen=True)
 class PublicationContext:
     publication_id: int
-    idempotency_key: str
+    provider_operation_key: str
     channel_external_id: str
     content_body: str
 
