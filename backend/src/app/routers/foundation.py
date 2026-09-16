@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.app.db import get_db
-from src.app.domain.content_state_machine import InvalidContentTransition, transition
+from src.app.domain.content_state_machine import transition
 from src.app.models import AuditLog, Channel, Content, ContentVersion, Publication, PublicationOperation, Workspace
 from src.app.observability import publication_event
 from src.app.publication_state import sync_content_status
@@ -98,9 +98,9 @@ class PublicationOut(BaseModel):
     worker_id: Optional[str]
     external_id: Optional[str]
     idempotency_key: str
-    provider_operation_key: Optional[str]
-    provider_operation_status: Optional[str]
-    provider_operation_attempt_count: int
+    provider_operation_key: Optional[str] = None
+    provider_operation_status: Optional[str] = None
+    provider_operation_attempt_count: int = 0
     error_message: Optional[str]
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -141,27 +141,25 @@ def audit(db: Session, workspace_id: int, entity_type: str, entity_id: int, acti
     db.add(AuditLog(workspace_id=workspace_id, entity_type=entity_type, entity_id=entity_id, action=action))
 
 
-def publication_ready_out(publication: Publication) -> PublicationReadyOut:
+def publication_out(publication: Publication) -> PublicationOut:
     operation = publication.provider_operation
-    return PublicationReadyOut(
-        **PublicationOut.model_validate(publication).model_dump(),
+    data = PublicationOut.model_validate(publication).model_dump()
+    data.update(
         provider_operation_key=operation.operation_key if operation else None,
         provider_operation_status=operation.status if operation else None,
         provider_operation_attempt_count=operation.attempt_count if operation else 0,
+    )
+    return PublicationOut(**data)
+
+
+def publication_ready_out(publication: Publication) -> PublicationReadyOut:
+    data = publication_out(publication).model_dump()
+    data.update(
         content_body=publication.content.body,
         channel_platform=publication.channel.platform,
         channel_external_id=publication.channel.external_id,
     )
-
-
-def publication_out(publication: Publication) -> PublicationOut:
-    operation = publication.provider_operation
-    return PublicationOut(
-        **PublicationOut.model_validate(publication).model_dump(exclude={"provider_operation_key", "provider_operation_status", "provider_operation_attempt_count"}),
-        provider_operation_key=operation.operation_key if operation else None,
-        provider_operation_status=operation.status if operation else None,
-        provider_operation_attempt_count=operation.attempt_count if operation else 0,
-    )
+    return PublicationReadyOut(**data)
 
 
 @router.post("/workspaces", response_model=WorkspaceOut, status_code=201, dependencies=[Depends(require_service_token)])
@@ -256,13 +254,12 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     publication = Publication(content_id=content.id, channel_id=channel.id, scheduled_at=payload.scheduled_at, idempotency_key=key, status="scheduled")
     db.add(publication)
     db.flush()
-    operation = PublicationOperation(
+    db.add(PublicationOperation(
         publication_id=publication.id,
         provider=channel.platform.strip().lower(),
         operation_key=f"publication:{uuid.uuid4().hex}",
         status="pending",
-    )
-    db.add(operation)
+    ))
     try:
         db.flush()
     except IntegrityError:
