@@ -1,7 +1,6 @@
 """Add database invariants and indexes for concurrent operations."""
 
 from alembic import op
-import sqlalchemy as sa
 
 revision = "0004_persistence_guards"
 down_revision = "0003_content_variants"
@@ -50,11 +49,6 @@ def upgrade():
         "content_variants",
         "version > 0",
     )
-    op.create_check_constraint(
-        "ck_content_variants_status_valid",
-        "content_variants",
-        "status IN ('draft', 'approved')",
-    )
 
     op.create_index(
         "ix_publications_ready_queue",
@@ -72,7 +66,6 @@ def downgrade():
     op.drop_index("ix_publications_stale_processing", table_name="publications")
     op.drop_index("ix_publications_ready_queue", table_name="publications")
 
-    op.drop_constraint("ck_content_variants_status_valid", "content_variants", type_="check")
     op.drop_constraint("ck_content_variants_version_positive", "content_variants", type_="check")
     op.drop_constraint("ck_generation_runs_status_valid", "generation_runs", type_="check")
     op.drop_constraint("ck_publication_operations_attempt_count_nonnegative", "publication_operations", type_="check")
