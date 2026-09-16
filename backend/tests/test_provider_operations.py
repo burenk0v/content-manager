@@ -1,4 +1,4 @@
-from test_foundation_api import HEADERS, TestingSession, client, create_publication
+from backend.tests.test_foundation_api import HEADERS, TestingSession, client, create_publication
 from src.app.models import PublicationOperation
 
 
