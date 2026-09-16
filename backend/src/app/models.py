@@ -97,6 +97,22 @@ class Publication(Base):
     __table_args__ = (Index("uq_publications_content_channel", "content_id", "channel_id", unique=True),)
     content = relationship("Content", back_populates="publications")
     channel = relationship("Channel", back_populates="publications")
+    provider_operation = relationship("PublicationOperation", back_populates="publication", uselist=False, cascade="all, delete-orphan")
+
+
+class PublicationOperation(Base):
+    __tablename__ = "publication_operations"
+    id = Column(Integer, primary_key=True, index=True)
+    publication_id = Column(Integer, ForeignKey("publications.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    provider = Column(String, nullable=False)
+    operation_key = Column(String, nullable=False, unique=True, index=True)
+    status = Column(String, nullable=False, default="pending", index=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    external_id = Column(String, nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    publication = relationship("Publication", back_populates="provider_operation")
 
 
 class AuditLog(Base):
