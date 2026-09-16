@@ -63,10 +63,31 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
     assert publication_indexes["uq_publications_content_channel"]["column_names"] == ["content_id", "channel_id"]
     assert "ix_publications_processing_token" in publication_indexes
     assert "ix_publications_lease_heartbeat_at" in publication_indexes
+    assert publication_indexes["ix_publications_ready_queue"]["column_names"] == [
+        "status", "next_attempt_at", "scheduled_at", "id"
+    ]
+    assert publication_indexes["ix_publications_stale_processing"]["column_names"] == [
+        "status", "lease_heartbeat_at", "processing_started_at", "id"
+    ]
 
     operation_indexes = {index["name"]: index for index in inspector.get_indexes("publication_operations")}
     assert "ix_publication_operations_publication_id" in operation_indexes
     assert "ix_publication_operations_operation_key" in operation_indexes
+
+    expected_checks = {
+        "contents": {"ck_contents_status_valid"},
+        "content_versions": {"ck_content_versions_version_positive"},
+        "publications": {"ck_publications_status_valid", "ck_publications_attempt_count_nonnegative"},
+        "publication_operations": {
+            "ck_publication_operations_status_valid",
+            "ck_publication_operations_attempt_count_nonnegative",
+        },
+        "generation_runs": {"ck_generation_runs_status_valid"},
+        "content_variants": {"ck_content_variants_version_positive"},
+    }
+    for table_name, expected_names in expected_checks.items():
+        actual_names = {item["name"] for item in inspector.get_check_constraints(table_name)}
+        assert expected_names <= actual_names
 
     generation_columns = {column["name"] for column in inspector.get_columns("generation_runs")}
     assert {
@@ -105,7 +126,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
 
     with engine.connect() as connection:
         version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-    assert version == "0003_content_variants"
+    assert version == "0004_persistence_guards"
 
 
 def test_alembic_can_downgrade_fresh_schema_to_base(tmp_path):
