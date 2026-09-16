@@ -1,7 +1,7 @@
 import uuid
 
 from src.app.models import ContentVariant
-from tests.test_foundation_api import HEADERS, client, engine, TestingSession
+from tests.test_foundation_api import HEADERS, client, TestingSession
 
 
 class FakeTransformer:
@@ -35,6 +35,11 @@ def create_content_and_channel():
     return content, channel
 
 
+def get_content(content_id):
+    contents = client.get("/content/contents", headers=HEADERS).json()
+    return next(item for item in contents if item["id"] == content_id)
+
+
 def test_transform_creates_channel_variant_without_mutating_source(monkeypatch):
     content, channel = create_content_and_channel()
     monkeypatch.setattr("src.app.routers.variants.get_content_transformer", lambda: FakeTransformer())
@@ -56,9 +61,8 @@ def test_transform_creates_channel_variant_without_mutating_source(monkeypatch):
     assert variant["body"] == "[telegram] Canonical text"
     assert variant["status"] == "draft"
 
-    source = client.get(f"/content/contents/{content['id']}", headers=HEADERS)
-    assert source.status_code == 200
-    assert source.json()["body"] == "Canonical text"
+    source = get_content(content["id"])
+    assert source["body"] == "Canonical text"
 
 
 def test_retransform_is_versioned_and_preserves_history(monkeypatch):
