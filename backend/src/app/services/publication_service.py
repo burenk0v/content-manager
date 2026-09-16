@@ -231,33 +231,14 @@ def fail(db: Session, publication_id: int, worker_id: str, processing_token: str
     publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
     operation = publication.provider_operation
     if operation:
-        operation.status = "failed"
+        operation.status = "failed" if retry else "unknown"
         operation.last_error = error_message
         operation.updated_at = now
     sync_content_status(db, publication.content)
     audit(db, publication.channel.workspace_id, "publication", publication.id, "failed")
-    event_name = "retry_scheduled" if target_status == "scheduled" else "failed"
+    event_name = "retry_scheduled" if target_status == "scheduled" else ("provider_outcome_unknown" if not retry else "failed")
     event = PublicationEvent(event_name, publication.id, publication.status, attempt_count=publication.attempt_count, error=publication.error_message)
     db.commit()
     db.refresh(publication)
     publication_event(event.event, event.publication_id, status=event.status, attempt_count=event.attempt_count, error=event.error)
-    return publication
-
-
-def mark_provider_outcome_unknown(db: Session, publication_id: int, worker_id: str, processing_token: str, error_message: str) -> Publication:
-    now = datetime.utcnow()
-    publication = db.query(Publication).filter(Publication.id == publication_id).first()
-    if not publication:
-        raise HTTPException(404, "Publication not found")
-    if publication.status != "processing" or publication.worker_id != worker_id or publication.processing_token != processing_token:
-        raise HTTPException(409, "Publication lease is no longer owned by this worker")
-    operation = publication.provider_operation
-    if operation:
-        operation.status = "unknown"
-        operation.last_error = error_message
-        operation.updated_at = now
-    publication.error_message = error_message
-    db.commit()
-    db.refresh(publication)
-    publication_event("provider_outcome_unknown", publication.id, status=publication.status, attempt_count=publication.attempt_count, error=error_message)
     return publication
