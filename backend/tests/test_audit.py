@@ -1,6 +1,6 @@
 import uuid
 
-from backend.tests.test_foundation_api import HEADERS, TestingSession, client
+from tests.test_foundation_api import HEADERS, TestingSession, client
 from src.app.models import AuditLog
 
 
