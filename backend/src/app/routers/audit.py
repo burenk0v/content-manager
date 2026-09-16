@@ -1,13 +1,13 @@
 from datetime import datetime
 from typing import Optional
-import os
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.app.db import get_db
 from src.app.models import AuditLog
+from src.app.security import require_service_token
 
 router = APIRouter()
 
@@ -23,12 +23,6 @@ class AuditEventOut(BaseModel):
     request_id: Optional[str]
     metadata: Optional[dict]
     created_at: datetime
-
-
-def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
-    expected = os.environ.get("SERVICE_ACCOUNT_TOKEN")
-    if not expected or x_service_token != expected:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
 
 
 @router.get("", response_model=list[AuditEventOut], dependencies=[Depends(require_service_token)])
