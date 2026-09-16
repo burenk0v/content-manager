@@ -112,6 +112,11 @@ class PublicationReadyOut(PublicationOut):
     channel_external_id: str
 
 
+class PublicationUnknownOut(PublicationOut):
+    channel_platform: str
+    channel_external_id: str
+
+
 class PublicationClaim(BaseModel):
     worker_id: str = Field(..., min_length=1, max_length=200)
 
@@ -160,12 +165,14 @@ def publication_out(publication: Publication) -> PublicationOut:
 
 def publication_ready_out(publication: Publication) -> PublicationReadyOut:
     data = publication_out(publication).model_dump()
-    data.update(
-        content_body=publication.content.body,
-        channel_platform=publication.channel.platform,
-        channel_external_id=publication.channel.external_id,
-    )
+    data.update(content_body=publication.content.body, channel_platform=publication.channel.platform, channel_external_id=publication.channel.external_id)
     return PublicationReadyOut(**data)
+
+
+def publication_unknown_out(publication: Publication) -> PublicationUnknownOut:
+    data = publication_out(publication).model_dump()
+    data.update(channel_platform=publication.channel.platform, channel_external_id=publication.channel.external_id)
+    return PublicationUnknownOut(**data)
 
 
 @router.post("/workspaces", response_model=WorkspaceOut, status_code=201, dependencies=[Depends(require_service_token)])
@@ -260,12 +267,7 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     publication = Publication(content_id=content.id, channel_id=channel.id, scheduled_at=payload.scheduled_at, idempotency_key=key, status="scheduled")
     db.add(publication)
     db.flush()
-    db.add(PublicationOperation(
-        publication_id=publication.id,
-        provider=channel.platform.strip().lower(),
-        operation_key=f"publication:{uuid.uuid4().hex}",
-        status="pending",
-    ))
+    db.add(PublicationOperation(publication_id=publication.id, provider=channel.platform.strip().lower(), operation_key=f"publication:{uuid.uuid4().hex}", status="pending"))
     try:
         db.flush()
     except IntegrityError:
@@ -295,6 +297,19 @@ def list_ready_publications(limit: int = 20, db: Session = Depends(get_db)):
     now = datetime.utcnow()
     query = db.query(Publication).join(Content).join(Channel).filter(Publication.status == "scheduled", or_(Publication.scheduled_at.is_(None), Publication.scheduled_at <= now), or_(Publication.next_attempt_at.is_(None), Publication.next_attempt_at <= now), Channel.is_active.is_(True)).order_by(Publication.id.asc()).limit(max(1, min(limit, 100)))
     return [publication_ready_out(item) for item in query.all()]
+
+
+@router.get("/publications/unknown", response_model=List[PublicationUnknownOut], dependencies=[Depends(require_service_token)])
+def list_unknown_publications(limit: int = 20, db: Session = Depends(get_db)):
+    query = (
+        db.query(Publication)
+        .join(PublicationOperation)
+        .join(Channel)
+        .filter(Publication.status == "failed", PublicationOperation.status == "unknown", Channel.is_active.is_(True))
+        .order_by(Publication.id.asc())
+        .limit(max(1, min(limit, 100)))
+    )
+    return [publication_unknown_out(item) for item in query.all()]
 
 
 @router.get("/publications", response_model=List[PublicationOut], dependencies=[Depends(require_service_token)])
@@ -332,12 +347,4 @@ def fail_publication(publication_id: int, payload: PublicationFail, db: Session 
 
 @router.post("/publications/{publication_id}/reconcile", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def reconcile_publication(publication_id: int, payload: PublicationReconciliation, db: Session = Depends(get_db)):
-    return publication_out(
-        publication_service.reconcile_unknown(
-            db,
-            publication_id,
-            payload.outcome,
-            payload.external_id,
-            payload.error_message,
-        )
-    )
+    return publication_out(publication_service.reconcile_unknown(db, publication_id, payload.outcome, payload.external_id, payload.error_message))
