@@ -1,6 +1,7 @@
 import pytest
 
-from src.publication_worker import calculate_retry_delay, publish_one
+from src.providers.base import AmbiguousPublicationError
+from src.publication_worker import publish_one
 
 
 class FakeBot:
@@ -26,7 +27,15 @@ async def test_publish_one_uses_telegram_adapter(monkeypatch):
     completed = []
 
     async def claim(publication_id):
-        return {"id": 7, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "<b>Hello</b>", "attempt_count": 1, "processing_token": "token-7"}
+        return {
+            "id": 7,
+            "channel_platform": "telegram",
+            "channel_external_id": "@channel",
+            "content_body": "<b>Hello</b>",
+            "idempotency_key": "publication:7",
+            "attempt_count": 1,
+            "processing_token": "token-7",
+        }
 
     async def complete(publication_id, external_id, processing_token):
         completed.append((publication_id, external_id, processing_token))
@@ -46,7 +55,15 @@ async def test_publish_one_splits_oversized_content(monkeypatch):
     completed = []
 
     async def claim(publication_id):
-        return {"id": 8, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "x" * 8000, "attempt_count": 1, "processing_token": "token-8"}
+        return {
+            "id": 8,
+            "channel_platform": "telegram",
+            "channel_external_id": "@channel",
+            "content_body": "x" * 8000,
+            "idempotency_key": "publication:8",
+            "attempt_count": 1,
+            "processing_token": "token-8",
+        }
 
     async def complete(publication_id, external_id, processing_token):
         completed.append((publication_id, external_id, processing_token))
@@ -68,17 +85,25 @@ async def test_publish_one_rejects_unsupported_platform(monkeypatch):
     failures = []
 
     async def claim(publication_id):
-        return {"id": 9, "channel_platform": "instagram", "channel_external_id": "x", "content_body": "Hello", "attempt_count": 1, "processing_token": "token-9"}
+        return {
+            "id": 9,
+            "channel_platform": "instagram",
+            "channel_external_id": "x",
+            "content_body": "Hello",
+            "idempotency_key": "publication:9",
+            "attempt_count": 1,
+            "processing_token": "token-9",
+        }
 
-    async def fail(publication_id, error_message, attempt_count, processing_token):
-        failures.append((publication_id, error_message, attempt_count, processing_token))
+    async def fail(publication_id, error_message, processing_token, *, retry):
+        failures.append((publication_id, error_message, processing_token, retry))
 
     monkeypatch.setattr("src.publication_worker.claim_publication", claim)
     monkeypatch.setattr("src.publication_worker.fail_publication", fail)
 
     await publish_one(bot, {"id": 9})
 
-    assert failures == [(9, "Unsupported publication platform: instagram", 1, "token-9")]
+    assert failures == [(9, "Unsupported publication platform: instagram", "token-9", True)]
 
 
 @pytest.mark.asyncio
@@ -94,15 +119,23 @@ async def test_publish_one_does_not_send_when_claim_is_lost(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publish_one_persists_send_failure(monkeypatch):
+async def test_publish_one_persists_send_failure_with_retry(monkeypatch):
     bot = FakeBot()
     failures = []
 
     async def claim(publication_id):
-        return {"id": 7, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "Hello", "attempt_count": 2, "processing_token": "token-7"}
+        return {
+            "id": 7,
+            "channel_platform": "telegram",
+            "channel_external_id": "@channel",
+            "content_body": "Hello",
+            "idempotency_key": "publication:7",
+            "attempt_count": 2,
+            "processing_token": "token-7",
+        }
 
-    async def fail(publication_id, error_message, attempt_count, processing_token):
-        failures.append((publication_id, error_message, attempt_count, processing_token))
+    async def fail(publication_id, error_message, processing_token, *, retry):
+        failures.append((publication_id, error_message, processing_token, retry))
 
     async def send_message(*args, **kwargs):
         raise RuntimeError("Telegram unavailable")
@@ -112,16 +145,36 @@ async def test_publish_one_persists_send_failure(monkeypatch):
     monkeypatch.setattr("src.publication_worker.fail_publication", fail)
 
     await publish_one(bot, {"id": 7})
-    assert failures == [(7, "Telegram unavailable", 2, "token-7")]
+    assert failures == [(7, "Telegram unavailable", "token-7", True)]
 
 
-def test_retry_delay_grows_exponentially(monkeypatch):
-    monkeypatch.setattr("src.publication_worker.random.uniform", lambda low, high: high)
-    assert calculate_retry_delay(1) == 75
-    assert calculate_retry_delay(2) == 150
-    assert calculate_retry_delay(3) == 300
+@pytest.mark.asyncio
+async def test_publish_one_does_not_retry_ambiguous_provider_outcome(monkeypatch):
+    bot = FakeBot()
+    failures = []
 
+    class AmbiguousPublisher:
+        async def publish(self, context):
+            raise AmbiguousPublicationError("provider outcome unknown")
 
-def test_retry_delay_is_capped(monkeypatch):
-    monkeypatch.setattr("src.publication_worker.random.uniform", lambda low, high: high)
-    assert calculate_retry_delay(99) == 3600
+    async def claim(publication_id):
+        return {
+            "id": 10,
+            "channel_platform": "telegram",
+            "channel_external_id": "@channel",
+            "content_body": "Hello",
+            "idempotency_key": "publication:10",
+            "attempt_count": 1,
+            "processing_token": "token-10",
+        }
+
+    async def fail(publication_id, error_message, processing_token, *, retry):
+        failures.append((publication_id, error_message, processing_token, retry))
+
+    monkeypatch.setattr("src.publication_worker.claim_publication", claim)
+    monkeypatch.setattr("src.publication_worker.fail_publication", fail)
+    monkeypatch.setattr("src.publication_worker.registry.get", lambda platform, **kwargs: AmbiguousPublisher())
+
+    await publish_one(bot, {"id": 10})
+
+    assert failures == [(10, "provider outcome unknown", "token-10", False)]
