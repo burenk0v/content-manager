@@ -1,12 +1,12 @@
 # content-manager
 
-Content Manager is a Docker-based project with three main services for managing content schedules, topics, and Telegram bot integration.
+Content Manager is a Docker-based project with three main services for managing content schedules, topics, AI-assisted content generation, and Telegram publishing.
 
 ## Overview
 
 This system provides:
 
-- **REST API** (FastAPI backend) for content management with scheduled posting
+- **REST API** (FastAPI backend) for content management, AI generation, and scheduled posting
 - **Admin Dashboard** (Django frontend) for UI management
 - **Telegram Bot** (Aiogram) for admin commands and scheduled publishing
 - **PostgreSQL Database** for persistent data storage
@@ -40,11 +40,13 @@ This system provides:
   - `GET /` — service status
   - `GET /health/db` — database connectivity check
   - `GET /docs` — Swagger API documentation
-  - `/content/*` — content management endpoints
+  - `/content/*` — content lifecycle, planning, publication, and generation endpoints
 - **Features**:
   - SQLAlchemy ORM with PostgreSQL
-  - Content draft and schedule management
-  - Topic AI generation
+  - Versioned content as the canonical content representation
+  - AI generation with persisted generation runs
+  - Explicit content state machine and approval workflow
+  - Provider-aware publication execution
   - Authentication via `SERVICE_ACCOUNT_TOKEN`
 
 #### Frontend (Django)
@@ -93,7 +95,9 @@ Required configuration:
 | `SECRET_KEY` | — | Django/backend secret key |
 | `BOT_TOKEN` | — | Used as initial value for per-user UI Telegram settings |
 | `ADMINS` | — | Used as initial value for per-user UI Telegram settings |
-| `OPENAI_API_KEY` | — | Used as initial value for per-user UI Telegram settings |
+| `OPENAI_API_KEY` | — | OpenAI API key for backend AI generation |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Default model for backend AI generation |
+| `AI_GENERATION_PROVIDER` | `openai` | Backend generation provider |
 | `WEBAPP_URL` | `https://example.com` | Used as initial value for per-user UI Telegram settings |
 | `SCHEDULE_CHECK_INTERVAL_SECONDS` | `10` | Used as initial value for per-user UI Telegram settings |
 | `PUBLICATION_WORKER_ID` | `telegram:<hostname>` | Stable worker identity used for publication leases |
@@ -111,36 +115,22 @@ Required configuration:
 - English (`en`)
 - Spanish (`es`)
 
-## Getting Started
+## AI Content Pipeline
 
-### Prerequisites
+AI generation is part of the content lifecycle rather than a separate draft system. A generation request creates a durable `GenerationRun` and, on success, a new `ContentVersion`.
 
-- Docker and Docker Compose
-- Environment variables configured in `.env`
+The canonical flow is:
 
-### Run Locally
+`draft/review/approved/scheduled → generate → new ContentVersion → draft → review → approved → scheduled → published`
 
-```bash
-docker compose up --build
-```
+Regeneration never overwrites an existing version. When generation happens from `review`, `approved`, or `scheduled`, the new version invalidates the previous approval and returns the content to `draft` for human review.
 
-Services will be available at:
+### Generation API
 
-- **Frontend**: https://localhost:8443
-- **Backend API**: http://localhost:8000
-- **Database**: localhost:5432
+- `POST /content/contents/{content_id}/generate` — generate a new version
+- `GET /content/contents/{content_id}/generations` — inspect generation history
 
-### View Logs
-
-```bash
-# All services
-docker compose logs -f
-
-# Specific service
-docker compose logs -f telegram
-docker compose logs -f backend
-docker compose logs -f frontend
-```
+Generation providers are isolated behind a small backend contract. The current production provider is OpenAI. Provider failures are persisted as failed generation runs and do not create a partial content version.
 
 ## Publication Execution Model
 
@@ -164,5 +154,7 @@ Telegram currently supports publication but does not provide a safe provider-sid
 - **Draft Publishing**: Handles race conditions by reloading topics on `IntegrityError` during publish
 - **Service Authentication**: All inter-service communication uses `SERVICE_ACCOUNT_TOKEN`
 - **Content Lifecycle**: Content status transitions are validated by a dedicated domain state machine
+- **Content Versions**: Versions are immutable and publications pin the exact version they publish
+- **Generation History**: Every AI generation attempt is persisted with provider, model, prompt, status, and resulting version
 - **Publication Identity**: Each publication has a provider operation key separate from its database idempotency key
 - **Provider Safety**: Ambiguous provider outcomes never trigger an automatic blind replay
