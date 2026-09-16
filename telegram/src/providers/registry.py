@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from .base import ProviderReconciler, Publisher
+from .base import ProviderCapabilities, ProviderReconciler, Publisher
 from .telegram import TelegramPublisher
 
 
@@ -49,6 +49,10 @@ class ProviderRegistry:
                 f"Provider reconciliation is unsupported for platform: {platform}"
             )
         return factory(**kwargs)
+
+    def capabilities(self, platform: str, **kwargs: Any) -> ProviderCapabilities:
+        publisher = self.get(platform, **kwargs)
+        return publisher.capabilities
 
 
 def build_default_registry() -> ProviderRegistry:
