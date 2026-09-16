@@ -7,9 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from src.app.audit import audit
 from src.app.db import get_db
 from src.app.domain.content_state_machine import transition
-from src.app.models import AuditLog, Channel, Content, ContentVersion, Publication, PublicationOperation, Workspace
+from src.app.models import Channel, Content, ContentVersion, Publication, PublicationOperation, Workspace
 from src.app.observability import publication_event
 from src.app.services import publication_service
 
@@ -136,7 +137,9 @@ class PublicationComplete(PublicationLease):
     external_id: str = Field(..., min_length=1, max_length=255)
 
 
-class PublicationFail(PublicationLease):
+class PublicationFail(BaseModel):
+    worker_id: str = Field(..., min_length=1, max_length=200)
+    processing_token: str = Field(..., min_length=1, max_length=64)
     error_message: str = Field(..., min_length=1, max_length=4000)
     retry: bool = True
 
@@ -152,18 +155,6 @@ def require_service_token(x_service_token: Optional[str] = Header(None)) -> None
     expected = os.environ.get("SERVICE_ACCOUNT_TOKEN")
     if not expected or x_service_token != expected:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
-
-
-def audit(db: Session, workspace_id: int, entity_type: str, entity_id: int, action: str, metadata: Optional[dict] = None) -> None:
-    db.add(
-        AuditLog(
-            workspace_id=workspace_id,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            action=action,
-            metadata_json=metadata,
-        )
-    )
 
 
 def publication_out(publication: Publication) -> PublicationOut:
@@ -193,7 +184,7 @@ def create_workspace(payload: WorkspaceCreate, db: Session = Depends(get_db)):
     workspace = Workspace(name=payload.name.strip(), slug=slug)
     db.add(workspace)
     db.flush()
-    audit(db, workspace.id, "workspace", workspace.id, "created")
+    audit(db, workspace.id, "workspace", workspace.id, "created", event_type="workspace.created")
     db.commit()
     db.refresh(workspace)
     return workspace
@@ -215,7 +206,7 @@ def create_channel(payload: ChannelCreate, db: Session = Depends(get_db)):
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Channel already exists")
-    audit(db, channel.workspace_id, "channel", channel.id, "created")
+    audit(db, channel.workspace_id, "channel", channel.id, "created", event_type="channel.created")
     db.commit()
     db.refresh(channel)
     return channel
@@ -237,7 +228,7 @@ def create_content(payload: ContentCreate, db: Session = Depends(get_db)):
     db.add(content)
     db.flush()
     db.add(ContentVersion(content_id=content.id, version=1, body=payload.body, source=payload.source, created_by=payload.created_by))
-    audit(db, content.workspace_id, "content", content.id, "created")
+    audit(db, content.workspace_id, "content", content.id, "created", actor_user_id=payload.created_by, event_type="content.created", metadata={"language": content.language, "source": payload.source})
     db.commit()
     db.refresh(content)
     return content
@@ -263,10 +254,10 @@ def create_content_version(content_id: int, payload: ContentUpdate, db: Session 
         metadata["approval_invalidated"] = True
         metadata["from_status"] = previous_status
         metadata["to_status"] = "draft"
-        audit(db, content.workspace_id, "content", content.id, "status_changed", metadata)
+        audit(db, content.workspace_id, "content", content.id, "status_changed", actor_user_id=payload.created_by, event_type="content.approval_invalidated", metadata=metadata)
 
     content.updated_at = datetime.utcnow()
-    audit(db, content.workspace_id, "content_version", content.id, "created", metadata)
+    audit(db, content.workspace_id, "content_version", version.id, "created", actor_user_id=payload.created_by, event_type="content_version.created", metadata=metadata)
     db.commit()
     db.refresh(version)
     return version
@@ -322,8 +313,8 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
         transition(content.status, "scheduled")
         content.status = "scheduled"
         content.updated_at = datetime.utcnow()
-        audit(db, content.workspace_id, "content", content.id, "status_changed")
-    audit(db, content.workspace_id, "publication", publication.id, "scheduled")
+        audit(db, content.workspace_id, "content", content.id, "status_changed", event_type="content.status_changed", metadata={"from": "approved", "to": "scheduled"})
+    audit(db, content.workspace_id, "publication", publication.id, "scheduled", event_type="publication.scheduled", metadata={"channel_id": channel.id, "content_version_id": publication.content_version_id})
     db.commit()
     db.refresh(publication)
     publication_event("scheduled", publication.id, status=publication.status, attempt_count=publication.attempt_count)
