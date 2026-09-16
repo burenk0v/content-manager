@@ -41,6 +41,8 @@ async def claim_publication(publication_id: int) -> dict[str, Any] | None:
     claimed = response.json()
     if not claimed.get("processing_token"):
         raise RuntimeError(f"Publication {publication_id} was claimed without a processing lease")
+    if not claimed.get("provider_operation_key"):
+        raise RuntimeError(f"Publication {publication_id} was claimed without a provider operation key")
     return claimed
 
 
@@ -72,6 +74,15 @@ async def fail_publication(publication_id: int, error_message: str, processing_t
             "error_message": error_message[:4000],
             "retry": retry,
         },
+    )
+    response.raise_for_status()
+
+
+async def mark_provider_outcome_unknown(publication_id: int, error_message: str, processing_token: str) -> None:
+    response = await backend_request(
+        "POST",
+        f"/content/publications/{publication_id}/provider-outcome-unknown",
+        json={"worker_id": WORKER_ID, "processing_token": processing_token, "error_message": error_message[:4000]},
     )
     response.raise_for_status()
 
@@ -111,7 +122,7 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
         result = await publisher.publish(
             PublicationContext(
                 publication_id=publication_id,
-                idempotency_key=claimed["idempotency_key"],
+                provider_operation_key=claimed["provider_operation_key"],
                 channel_external_id=claimed["channel_external_id"],
                 content_body=claimed.get("content_body", ""),
             )
@@ -121,7 +132,7 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
     except AmbiguousPublicationError as exc:
         logging.error("Publication %s has ambiguous provider outcome: %s", publication_id, exc)
         try:
-            await fail_publication(publication_id, str(exc), processing_token, retry=False)
+            await mark_provider_outcome_unknown(publication_id, str(exc), processing_token)
         except httpx.HTTPStatusError as persist_exc:
             if persist_exc.response.status_code == 409:
                 logging.warning("Publication %s lease was lost before ambiguous outcome could be persisted", publication_id)
