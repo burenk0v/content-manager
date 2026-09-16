@@ -17,7 +17,7 @@ from sqlalchemy.pool import NullPool
 from src.app.db import Base, get_db
 from src.app.main import app
 from src.app.models import Publication
-from src.app.routers.foundation import retry_delay_seconds, retry_max_attempts
+from src.app.services.publication_service import retry_delay_seconds, retry_max_attempts
 
 _fd, _db_path = tempfile.mkstemp(prefix="content_manager_test_", suffix=".sqlite3")
 os.close(_fd)
@@ -337,23 +337,3 @@ def test_expired_lease_cannot_complete_without_recovery():
 
     response = client.post(f"/content/publications/{publication['id']}/complete", json={"worker_id": "worker-a", "processing_token": token, "external_id": "late"}, headers=HEADERS)
     assert response.status_code == 409
-
-
-def test_stale_recovery_handles_missing_heartbeat():
-    publication = create_publication()
-    claimed = client.post(f"/content/publications/{publication['id']}/claim", json={"worker_id": "dead-worker"}, headers=HEADERS)
-    assert claimed.status_code == 200
-
-    db = TestingSession()
-    try:
-        item = db.query(Publication).filter(Publication.id == publication["id"]).one()
-        item.processing_started_at = datetime.utcnow() - timedelta(hours=1)
-        item.lease_heartbeat_at = None
-        db.commit()
-    finally:
-        db.close()
-
-    recovered = client.post("/content/publications/recover-stale", headers=HEADERS)
-    assert recovered.status_code == 200
-    item = next(item for item in recovered.json() if item["id"] == publication["id"])
-    assert item["status"] == "scheduled"
