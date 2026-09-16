@@ -1,0 +1,339 @@
+import os
+import tempfile
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+
+os.environ["SERVICE_ACCOUNT_TOKEN"] = "test-token"
+os.environ["PUBLICATION_RETRY_DELAY_SECONDS"] = "60"
+os.environ["PUBLICATION_RETRY_MAX_DELAY_SECONDS"] = "3600"
+os.environ["PUBLICATION_MAX_ATTEMPTS"] = "5"
+
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
+
+from src.app.db import Base, get_db
+from src.app.main import app
+from src.app.models import Publication
+from src.app.services.publication_service import retry_delay_seconds, retry_max_attempts
+
+_fd, _db_path = tempfile.mkstemp(prefix="content_manager_test_", suffix=".sqlite3")
+os.close(_fd)
+engine = create_engine(
+    f"sqlite:///{_db_path}",
+    connect_args={"check_same_thread": False, "timeout": 30},
+    poolclass=NullPool,
+)
+TestingSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+Base.metadata.create_all(bind=engine)
+
+
+def override_db():
+    db = TestingSession()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+app.dependency_overrides[get_db] = override_db
+client = TestClient(app)
+HEADERS = {"X-Service-Token": "test-token"}
+
+
+def create_publication(scheduled_at=None):
+    suffix = uuid.uuid4().hex[:8]
+    workspace = client.post("/content/workspaces", json={"name": f"Test {suffix}", "slug": f"test-{suffix}"}, headers=HEADERS)
+    assert workspace.status_code == 201
+    workspace_id = workspace.json()["id"]
+    channel = client.post("/content/channels", json={"workspace_id": workspace_id, "platform": "telegram", "external_id": f"@test_channel_{suffix}"}, headers=HEADERS)
+    assert channel.status_code == 201
+    channel_id = channel.json()["id"]
+    content = client.post("/content/contents", json={"workspace_id": workspace_id, "body": "Hello Phase 1", "language": "en", "source": "human"}, headers=HEADERS)
+    assert content.status_code == 201
+    content_id = content.json()["id"]
+    for target in ("review", "approved"):
+        response = client.post(f"/content/contents/{content_id}/transition", json={"status": target}, headers=HEADERS)
+        assert response.status_code == 200
+    payload = {"content_id": content_id, "channel_id": channel_id, "idempotency_key": f"publish-{suffix}"}
+    if scheduled_at is not None:
+        payload["scheduled_at"] = scheduled_at
+    publication = client.post("/content/publications", json=payload, headers=HEADERS)
+    assert publication.status_code == 201
+    return publication.json()
+
+
+def test_publication_requires_approved_content():
+    suffix = uuid.uuid4().hex[:8]
+    workspace = client.post("/content/workspaces", json={"name": f"Gate {suffix}", "slug": f"gate-{suffix}"}, headers=HEADERS).json()
+    channel = client.post("/content/channels", json={"workspace_id": workspace["id"], "platform": "telegram", "external_id": f"@gate_{suffix}"}, headers=HEADERS).json()
+    content = client.post("/content/contents", json={"workspace_id": workspace["id"], "body": "Needs approval", "language": "en"}, headers=HEADERS).json()
+    response = client.post("/content/publications", json={"content_id": content["id"], "channel_id": channel["id"]}, headers=HEADERS)
+    assert response.status_code == 409
+
+
+def test_content_lifecycle_and_idempotent_publication():
+    publication = create_publication()
+    second = client.post("/content/publications", json={"content_id": publication["content_id"], "channel_id": publication["channel_id"], "idempotency_key": publication["idempotency_key"]}, headers=HEADERS)
+    assert second.status_code == 201
+    assert second.json()["id"] == publication["id"]
+
+
+def test_duplicate_content_channel_is_rejected_even_with_new_idempotency_key():
+    publication = create_publication()
+    response = client.post("/content/publications", json={"content_id": publication["content_id"], "channel_id": publication["channel_id"], "idempotency_key": f"different-{uuid.uuid4().hex}"}, headers=HEADERS)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Publication already exists for this content and channel"
+
+
+def test_scheduled_content_can_add_second_channel():
+    publication = create_publication()
+    content_id = publication["content_id"]
+    workspace_id = client.get("/content/contents", headers=HEADERS).json()[-1]["workspace_id"]
+    suffix = uuid.uuid4().hex[:8]
+    channel = client.post("/content/channels", json={"workspace_id": workspace_id, "platform": "telegram", "external_id": f"@second_{suffix}"}, headers=HEADERS)
+    assert channel.status_code == 201
+    second = client.post("/content/publications", json={"content_id": content_id, "channel_id": channel.json()["id"], "idempotency_key": f"second-{suffix}"}, headers=HEADERS)
+    assert second.status_code == 201
+    assert second.json()["content_id"] == content_id
+    assert second.json()["channel_id"] == channel.json()["id"]
+    assert client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS).json()["status"] == "scheduled"
+
+
+def test_multi_channel_content_publishes_only_after_all_channels_complete():
+    first = create_publication(); content_id = first["content_id"]
+    workspace_id = client.get("/content/contents", headers=HEADERS).json()[-1]["workspace_id"]
+    suffix = uuid.uuid4().hex[:8]
+    second_channel = client.post("/content/channels", json={"workspace_id": workspace_id, "platform": "telegram", "external_id": f"@multi_{suffix}"}, headers=HEADERS).json()
+    second = client.post("/content/publications", json={"content_id": content_id, "channel_id": second_channel["id"], "idempotency_key": f"multi-{suffix}"}, headers=HEADERS).json()
+
+    first_claim = client.post(f"/content/publications/{first['id']}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
+    assert first_claim.status_code == 200
+    first_token = first_claim.json()["processing_token"]
+    assert client.post(f"/content/publications/{first['id']}/complete", json={"worker_id": "worker-a", "processing_token": first_token, "external_id": "tg-a"}, headers=HEADERS).status_code == 200
+    assert client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS).json()["status"] == "scheduled"
+
+    second_claim = client.post(f"/content/publications/{second['id']}/claim", json={"worker_id": "worker-b"}, headers=HEADERS)
+    assert second_claim.status_code == 200
+    second_token = second_claim.json()["processing_token"]
+    assert client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS).json()["status"] == "publishing"
+    completed = client.post(f"/content/publications/{second['id']}/complete", json={"worker_id": "worker-b", "processing_token": second_token, "external_id": "tg-b"}, headers=HEADERS)
+    assert completed.status_code == 200
+    assert client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS).json()["status"] == "published"
+
+
+def test_publication_rejects_cross_workspace_channel():
+    first = create_publication(); suffix = uuid.uuid4().hex[:8]
+    other_workspace = client.post("/content/workspaces", json={"name": f"Other {suffix}", "slug": f"other-{suffix}"}, headers=HEADERS).json()
+    other_channel = client.post("/content/channels", json={"workspace_id": other_workspace["id"], "platform": "telegram", "external_id": f"@other_{suffix}"}, headers=HEADERS).json()
+    response = client.post("/content/publications", json={"content_id": first["content_id"], "channel_id": other_channel["id"], "idempotency_key": f"cross-{suffix}"}, headers=HEADERS)
+    assert response.status_code == 400
+
+
+def test_published_content_cannot_add_publication():
+    publication = create_publication()
+    claim = client.post(f"/content/publications/{publication['id']}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
+    token = claim.json()["processing_token"]
+    assert client.post(f"/content/publications/{publication['id']}/complete", json={"worker_id": "worker-a", "processing_token": token, "external_id": "tg-1"}, headers=HEADERS).status_code == 200
+    suffix = uuid.uuid4().hex[:8]
+    workspace_id = client.get("/content/contents", headers=HEADERS).json()[-1]["workspace_id"]
+    channel = client.post("/content/channels", json={"workspace_id": workspace_id, "platform": "telegram", "external_id": f"@late_{suffix}"}, headers=HEADERS).json()
+    response = client.post("/content/publications", json={"content_id": publication["content_id"], "channel_id": channel["id"], "idempotency_key": f"late-{suffix}"}, headers=HEADERS)
+    assert response.status_code == 409
+
+
+def test_publication_ready_respects_schedule_and_active_channel():
+    future = (datetime.utcnow() + timedelta(minutes=30)).isoformat()
+    publication = create_publication(scheduled_at=future)
+    ready = client.get("/content/publications/ready", headers=HEADERS)
+    assert ready.status_code == 200
+    assert publication["id"] not in {item["id"] for item in ready.json()}
+
+
+def test_publication_claim_is_single_owner_and_can_complete():
+    publication = create_publication(); publication_id = publication["id"]
+    first = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
+    assert first.status_code == 200
+    assert first.json()["status"] == "processing" and first.json()["attempt_count"] == 1
+    token = first.json()["processing_token"]
+    assert token
+    assert first.json()["lease_heartbeat_at"] is not None
+    assert client.get(f"/content/contents/{publication['content_id']}/transitions", headers=HEADERS).json()["status"] == "publishing"
+    second = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "worker-b"}, headers=HEADERS)
+    assert second.status_code == 409
+    wrong_worker = client.post(f"/content/publications/{publication_id}/complete", json={"worker_id": "worker-b", "processing_token": token, "external_id": "tg-1"}, headers=HEADERS)
+    assert wrong_worker.status_code == 409
+    completed = client.post(f"/content/publications/{publication_id}/complete", json={"worker_id": "worker-a", "processing_token": token, "external_id": "tg-1"}, headers=HEADERS)
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "published"
+    assert completed.json()["lease_heartbeat_at"] is None
+    assert client.get(f"/content/contents/{publication['content_id']}/transitions", headers=HEADERS).json()["status"] == "published"
+
+
+def test_concurrent_claims_allow_exactly_one_worker_to_acquire_lease():
+    publication_id = create_publication()["id"]
+
+    def claim(worker_id):
+        with TestClient(app) as worker_client:
+            response = worker_client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": worker_id}, headers=HEADERS)
+            return response.status_code, response.json()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(claim, ("worker-a", "worker-b")))
+
+    successes = [result for result in results if result[0] == 200]
+    conflicts = [result for result in results if result[0] == 409]
+    assert len(successes) == 1
+    assert len(conflicts) == 1
+    assert successes[0][1]["status"] == "processing"
+    assert successes[0][1]["processing_token"]
+    assert successes[0][1]["attempt_count"] == 1
+
+    db = TestingSession()
+    try:
+        persisted = db.query(Publication).filter(Publication.id == publication_id).one()
+        assert persisted.status == "processing"
+        assert persisted.worker_id == successes[0][1]["worker_id"]
+        assert persisted.processing_token == successes[0][1]["processing_token"]
+        assert persisted.attempt_count == 1
+    finally:
+        db.close()
+
+
+def test_publication_heartbeat_renews_owned_lease_and_rejects_wrong_token():
+    publication = create_publication()
+    publication_id = publication["id"]
+    claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
+    assert claimed.status_code == 200
+    token = claimed.json()["processing_token"]
+    before = claimed.json()["lease_heartbeat_at"]
+    assert before is not None
+
+    renewed = client.post(f"/content/publications/{publication_id}/heartbeat", json={"worker_id": "worker-a", "processing_token": token}, headers=HEADERS)
+    assert renewed.status_code == 200
+    assert renewed.json()["processing_token"] == token
+    assert renewed.json()["lease_heartbeat_at"] is not None
+    assert renewed.json()["lease_heartbeat_at"] >= before
+
+    wrong_token = client.post(f"/content/publications/{publication_id}/heartbeat", json={"worker_id": "worker-a", "processing_token": "wrong-token"}, headers=HEADERS)
+    assert wrong_token.status_code == 409
+
+
+def test_old_processing_token_cannot_complete_after_stale_recovery():
+    publication_id = create_publication()["id"]
+    claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "dead-worker"}, headers=HEADERS)
+    assert claimed.status_code == 200
+    old_token = claimed.json()["processing_token"]
+    db = TestingSession()
+    try:
+        publication = db.query(Publication).filter(Publication.id == publication_id).one()
+        stale_at = datetime.utcnow() - timedelta(hours=1)
+        publication.processing_started_at = stale_at
+        publication.lease_heartbeat_at = stale_at
+        db.commit()
+    finally:
+        db.close()
+
+    recovered = client.post("/content/publications/recover-stale", headers=HEADERS)
+    assert recovered.status_code == 200
+    item = next(item for item in recovered.json() if item["id"] == publication_id)
+    assert item["status"] == "scheduled" and item["processing_token"] is None and item["lease_heartbeat_at"] is None
+
+    stale_complete = client.post(f"/content/publications/{publication_id}/complete", json={"worker_id": "dead-worker", "processing_token": old_token, "external_id": "late"}, headers=HEADERS)
+    assert stale_complete.status_code == 409
+
+    re_claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "new-worker"}, headers=HEADERS)
+    assert re_claimed.status_code == 200
+    assert re_claimed.json()["processing_token"] != old_token
+
+
+def test_publication_failure_uses_backend_retry_policy():
+    publication = create_publication(); publication_id = publication["id"]
+    claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
+    assert claimed.status_code == 200
+    token = claimed.json()["processing_token"]
+    retried = client.post(f"/content/publications/{publication_id}/fail", json={"worker_id": "worker-a", "processing_token": token, "error_message": "temporary", "retry": True}, headers=HEADERS)
+    assert retried.status_code == 200 and retried.json()["status"] == "scheduled"
+    assert retried.json()["attempt_count"] == 1 and retried.json()["next_attempt_at"] is not None
+    assert retried.json()["processing_token"] is None and retried.json()["lease_heartbeat_at"] is None
+    assert client.get(f"/content/contents/{publication['content_id']}/transitions", headers=HEADERS).json()["status"] == "scheduled"
+    assert retry_delay_seconds(1) == 60
+    assert retry_delay_seconds(2) == 120
+    assert retry_delay_seconds(10) == 3600
+    assert retry_max_attempts() == 5
+
+
+def test_publication_failure_stops_at_backend_max_attempts():
+    publication_id = create_publication()["id"]
+    for expected_attempt in range(1, 6):
+        claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": f"worker-{expected_attempt}"}, headers=HEADERS)
+        assert claimed.status_code == 200
+        token = claimed.json()["processing_token"]
+        failed = client.post(f"/content/publications/{publication_id}/fail", json={"worker_id": f"worker-{expected_attempt}", "processing_token": token, "error_message": "permanent", "retry": True}, headers=HEADERS)
+        assert failed.status_code == 200
+        expected_status = "scheduled" if expected_attempt < 5 else "failed"
+        assert failed.json()["status"] == expected_status
+        assert failed.json()["attempt_count"] == expected_attempt
+
+
+def test_stale_processing_claim_can_be_recovered():
+    publication_id = create_publication()["id"]
+    claimed = client.post(f"/content/publications/{publication_id}/claim", json={"worker_id": "dead-worker"}, headers=HEADERS)
+    assert claimed.status_code == 200
+    db = TestingSession()
+    try:
+        publication = db.query(Publication).filter(Publication.id == publication_id).one()
+        stale_at = datetime.utcnow() - timedelta(hours=1)
+        publication.processing_started_at = stale_at
+        publication.lease_heartbeat_at = stale_at
+        db.commit()
+    finally:
+        db.close()
+    recovered = client.post("/content/publications/recover-stale", headers=HEADERS)
+    assert recovered.status_code == 200
+    item = next(item for item in recovered.json() if item["id"] == publication_id)
+    assert item["status"] == "scheduled" and item["worker_id"] is None and item["processing_started_at"] is None and item["processing_token"] is None and item["lease_heartbeat_at"] is None
+    assert client.get(f"/content/contents/{item['content_id']}/transitions", headers=HEADERS).json()["status"] == "scheduled"
+
+
+def test_service_token_is_required():
+    response = client.get("/content/workspaces")
+    assert response.status_code == 401
+
+
+def test_expired_lease_cannot_be_renewed():
+    publication = create_publication()
+    claimed = client.post(f"/content/publications/{publication['id']}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
+    assert claimed.status_code == 200
+    token = claimed.json()["processing_token"]
+
+    db = TestingSession()
+    try:
+        item = db.query(Publication).filter(Publication.id == publication["id"]).one()
+        item.lease_heartbeat_at = datetime.utcnow() - timedelta(hours=1)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(f"/content/publications/{publication['id']}/heartbeat", json={"worker_id": "worker-a", "processing_token": token}, headers=HEADERS)
+    assert response.status_code == 409
+
+
+def test_expired_lease_cannot_complete_without_recovery():
+    publication = create_publication()
+    claimed = client.post(f"/content/publications/{publication['id']}/claim", json={"worker_id": "worker-a"}, headers=HEADERS)
+    assert claimed.status_code == 200
+    token = claimed.json()["processing_token"]
+
+    db = TestingSession()
+    try:
+        item = db.query(Publication).filter(Publication.id == publication["id"]).one()
+        item.lease_heartbeat_at = datetime.utcnow() - timedelta(hours=1)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(f"/content/publications/{publication['id']}/complete", json={"worker_id": "worker-a", "processing_token": token, "external_id": "late"}, headers=HEADERS)
+    assert response.status_code == 409

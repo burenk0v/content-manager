@@ -1,0 +1,36 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main, phase-1]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r src/requirements.txt
+      - run: PYTHONPATH=. pytest -q
+      - run: alembic upgrade head
+
+  telegram:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telegram
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r src/requirements.txt pytest pytest-asyncio
+      - run: PYTHONPATH=src:. pytest -q
+      - run: python -m compileall -q src

@@ -18,8 +18,10 @@ RUN useradd -m -u 1000 appuser
 # Copy only runtime dependencies from builder
 COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 
-# Copy application code
+# Copy application code and migration configuration
 COPY --chown=appuser:appuser src/ ./src/
+COPY --chown=appuser:appuser migrations/ ./migrations/
+COPY --chown=appuser:appuser alembic.ini ./alembic.ini
 
 # Set PATH to include user-installed packages
 ENV PATH=/home/appuser/.local/bin:$PATH \
@@ -33,4 +35,4 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
-CMD ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn src.app.main:app --host 0.0.0.0 --port 8000"]
