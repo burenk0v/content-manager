@@ -8,8 +8,8 @@ import httpx
 from aiogram import Bot
 
 from providers import PublicationContext, registry
-from providers.base import AmbiguousPublicationError, ReconciliationResult
-from providers.registry import UnsupportedReconcilerError
+from providers.base import AmbiguousPublicationError, PermanentPublicationError, ReconciliationResult
+from providers.registry import UnsupportedPublisherError, UnsupportedReconcilerError
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
@@ -166,6 +166,10 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
                 content_body=claimed.get("content_body", ""),
             )
         )
+        if not result.external_id:
+            raise PermanentPublicationError("Provider returned an empty external_id")
+        if result.message_count < 1:
+            raise PermanentPublicationError("Provider reported no published messages")
         await complete_publication(publication_id, result.external_id, processing_token)
         logging.info("Publication %s published as %s message(s), first message %s", publication_id, result.message_count, result.external_id)
     except AmbiguousPublicationError as exc:
@@ -179,6 +183,12 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
                 logging.exception("Failed to persist ambiguous publication outcome for %s", publication_id)
         except Exception:
             logging.exception("Failed to persist ambiguous publication outcome for %s", publication_id)
+    except (PermanentPublicationError, UnsupportedPublisherError) as exc:
+        logging.error("Publication %s is permanently invalid: %s", publication_id, exc)
+        try:
+            await fail_publication(publication_id, str(exc), processing_token, retry=False)
+        except Exception:
+            logging.exception("Failed to persist permanent publication failure for %s", publication_id)
     except Exception as exc:
         logging.exception("Publication %s failed", publication_id)
         try:
