@@ -8,3 +8,4 @@ pydantic
 psycopg2-binary
 pytest
 httpx
+openai

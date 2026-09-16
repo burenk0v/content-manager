@@ -59,6 +59,7 @@ class Content(Base):
     author = relationship("User")
     versions = relationship("ContentVersion", back_populates="content", cascade="all, delete-orphan", order_by="ContentVersion.version")
     publications = relationship("Publication", back_populates="content", cascade="all, delete-orphan")
+    generation_runs = relationship("GenerationRun", back_populates="content", cascade="all, delete-orphan")
 
     @property
     def body(self) -> str:
@@ -86,6 +87,22 @@ class ContentVersion(Base):
     content = relationship("Content", back_populates="versions")
     author = relationship("User")
     publications = relationship("Publication", back_populates="content_version")
+
+
+class GenerationRun(Base):
+    __tablename__ = "generation_runs"
+    id = Column(Integer, primary_key=True, index=True)
+    content_id = Column(Integer, ForeignKey("contents.id", ondelete="CASCADE"), nullable=False, index=True)
+    content_version_id = Column(Integer, ForeignKey("content_versions.id", ondelete="SET NULL"), nullable=True, index=True)
+    provider = Column(String, nullable=False)
+    model = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="running", index=True)
+    prompt = Column(Text, nullable=False)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    content = relationship("Content", back_populates="generation_runs")
+    content_version = relationship("ContentVersion")
 
 
 class Publication(Base):
