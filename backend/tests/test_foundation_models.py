@@ -14,31 +14,16 @@ def test_foundation_models_support_content_lifecycle():
         db.add(workspace)
         db.flush()
 
-        channel = Channel(
-            workspace_id=workspace.id,
-            platform="telegram",
-            external_id="-100123456789",
-            name="Demo channel",
-        )
-        content = Content(
-            workspace_id=workspace.id,
-            title="Hello",
-            body="Draft body",
-            language="en",
-        )
+        channel = Channel(workspace_id=workspace.id, platform="telegram", external_id="-100123456789", name="Demo channel")
+        content = Content(workspace_id=workspace.id, title="Hello", language="en")
         db.add_all([channel, content])
         db.flush()
-
-        version = ContentVersion(
-            content_id=content.id,
-            version=1,
-            body="Draft body",
-            source="human",
-        )
+        version = ContentVersion(content_id=content.id, version=1, body="Draft body", source="human")
         db.add(version)
         db.commit()
 
         assert content.versions[0].version == 1
+        assert content.current_version.body == "Draft body"
         assert channel.workspace.slug == "demo"
 
 
@@ -51,13 +36,11 @@ def test_content_version_number_is_unique_per_content():
         workspace = Workspace(name="Demo", slug="demo")
         db.add(workspace)
         db.flush()
-        content = Content(workspace_id=workspace.id, body="Body", language="en")
+        content = Content(workspace_id=workspace.id, language="en")
         db.add(content)
         db.flush()
-
         db.add(ContentVersion(content_id=content.id, version=1, body="v1"))
         db.commit()
-
         db.add(ContentVersion(content_id=content.id, version=1, body="duplicate"))
         try:
             db.commit()
