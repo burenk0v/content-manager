@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, or_, update
 from sqlalchemy.orm import Session
 
-from src.app.models import AuditLog, Content, Publication, PublicationOperation
+from src.app.models import AuditLog, Content, Publication
 from src.app.observability import publication_event
 from src.app.publication_state import sync_content_status
 
@@ -81,6 +81,17 @@ def recover_stale(db: Session) -> list[Publication]:
     ).all()]
     recovered = []
     for publication_id in stale_ids:
+        publication = db.query(Publication).filter(Publication.id == publication_id).first()
+        if not publication:
+            continue
+        operation = publication.provider_operation
+        outcome_unknown = operation is not None and operation.status == "processing"
+        target_status = "failed" if outcome_unknown else "scheduled"
+        error_message = (
+            "Provider operation outcome is unknown after stale lease recovery"
+            if outcome_unknown
+            else "Recovered stale processing claim"
+        )
         result = db.execute(update(Publication).where(
             Publication.id == publication_id,
             Publication.status == "processing",
@@ -89,17 +100,16 @@ def recover_stale(db: Session) -> list[Publication]:
                 and_(Publication.lease_heartbeat_at.is_(None), Publication.processing_started_at.is_not(None), Publication.processing_started_at < cutoff),
             ),
         ).values(
-            status="scheduled", next_attempt_at=now, processing_started_at=None,
-            processing_token=None, lease_heartbeat_at=None, worker_id=None,
-            error_message="Recovered stale processing claim",
+            status=target_status, next_attempt_at=None if outcome_unknown else now,
+            processing_started_at=None, processing_token=None, lease_heartbeat_at=None, worker_id=None,
+            error_message=error_message,
         ).execution_options(synchronize_session=False))
         if result.rowcount != 1:
             continue
         publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
-        operation = publication.provider_operation
         if operation and operation.status == "processing":
-            operation.status = "failed"
-            operation.last_error = "Provider operation lease recovered before completion"
+            operation.status = "unknown"
+            operation.last_error = error_message
             operation.updated_at = now
         sync_content_status(db, publication.content)
         recovered.append(publication)
@@ -107,7 +117,7 @@ def recover_stale(db: Session) -> list[Publication]:
         db.commit()
         for publication in recovered:
             db.refresh(publication)
-            publication_event("recovered", publication.id, status=publication.status, attempt_count=publication.attempt_count)
+            publication_event("recovered", publication.id, status=publication.status, attempt_count=publication.attempt_count, error=publication.error_message)
     return recovered
 
 
@@ -234,12 +244,12 @@ def fail(db: Session, publication_id: int, worker_id: str, processing_token: str
     return publication
 
 
-def mark_provider_outcome_unknown(db: Session, publication_id: int, processing_token: str, error_message: str) -> Publication:
+def mark_provider_outcome_unknown(db: Session, publication_id: int, worker_id: str, processing_token: str, error_message: str) -> Publication:
     now = datetime.utcnow()
     publication = db.query(Publication).filter(Publication.id == publication_id).first()
     if not publication:
         raise HTTPException(404, "Publication not found")
-    if publication.status != "processing" or publication.processing_token != processing_token:
+    if publication.status != "processing" or publication.worker_id != worker_id or publication.processing_token != processing_token:
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
     operation = publication.provider_operation
     if operation:
