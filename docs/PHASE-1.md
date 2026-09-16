@@ -23,6 +23,7 @@ Phase 1 establishes the persistence and delivery foundation for the future AI-na
 - Wired `SERVICE_ACCOUNT_TOKEN` into the backend container.
 - Added an explicit Telegram publication worker with atomic DB claims, stale-claim recovery, retry handling and provider-aware publication operations.
 - Telegram publications are formatted and split into safe chunks when the rendered message is too large for Telegram's message limit.
+- Added provider outcome reconciliation so an ambiguous external delivery is never blindly replayed.
 - Kept the current FastAPI + Django + Telegram + PostgreSQL architecture; no premature microservice split.
 
 ## Data model direction
@@ -52,7 +53,14 @@ The publication queue uses an atomic `scheduled -> processing` claim so concurre
 
 External delivery is intentionally **at-least-once**, not mathematically exactly-once. If a provider accepts a message and the worker crashes before the backend records `published`, the outcome can be unknown. `PublicationOperation` records that provider-facing operation separately from the internal publication idempotency key, allowing adapters with native idempotency to reuse the same operation key safely across retries.
 
-For providers without idempotency (currently Telegram), an ambiguous network failure is persisted as `PublicationOperation.status = unknown` and the publication becomes terminally `failed` until a future reconciliation flow resolves the external outcome. Stale worker recovery treats an in-flight provider operation as unknown rather than automatically replaying it, preventing an automatic duplicate external side effect.
+For providers without idempotency (currently Telegram), an ambiguous network failure is persisted as `PublicationOperation.status = unknown` and the publication becomes terminally `failed` until reconciliation resolves the external outcome. Stale worker recovery treats an in-flight provider operation as unknown rather than automatically replaying it.
+
+The provider-agnostic reconciliation endpoint accepts two explicit outcomes:
+
+- `published` — record the provider's external identifier and close the publication as published;
+- `retry` — explicitly confirm that no external delivery occurred and make the publication eligible for another processing attempt.
+
+A future provider adapter can automate this decision by querying provider-side delivery state where the platform exposes a reliable lookup mechanism. The backend remains authoritative over the resulting publication state.
 
 Telegram content is normalized to the supported HTML subset. Oversized rendered content is converted to conservative plain-text chunks before sending, avoiding a provider-side message-size failure.
 
