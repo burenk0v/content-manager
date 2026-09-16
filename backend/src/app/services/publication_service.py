@@ -242,3 +242,56 @@ def fail(db: Session, publication_id: int, worker_id: str, processing_token: str
     db.refresh(publication)
     publication_event(event.event, event.publication_id, status=event.status, attempt_count=event.attempt_count, error=event.error)
     return publication
+
+
+def reconcile_unknown(
+    db: Session,
+    publication_id: int,
+    outcome: str,
+    external_id: str | None = None,
+    error_message: str | None = None,
+) -> Publication:
+    """Resolve an unknown provider outcome without blindly replaying the side effect."""
+    now = datetime.utcnow()
+    publication = db.query(Publication).filter(Publication.id == publication_id).first()
+    if not publication:
+        raise HTTPException(404, "Publication not found")
+    operation = publication.provider_operation
+    if operation is None:
+        raise HTTPException(500, "Publication provider operation is missing")
+    if operation.status != "unknown" or publication.status != "failed":
+        raise HTTPException(409, "Publication is not awaiting provider reconciliation")
+
+    if outcome == "published":
+        if not external_id:
+            raise HTTPException(422, "external_id is required when outcome is published")
+        publication.status = "published"
+        publication.published_at = now
+        publication.external_id = external_id
+        publication.next_attempt_at = None
+        publication.error_message = None
+        operation.status = "succeeded"
+        operation.external_id = external_id
+        operation.last_error = None
+        audit(db, publication.channel.workspace_id, "publication", publication.id, "reconciled_published")
+        sync_content_status(db, publication.content)
+        event_name = "reconciled_published"
+    elif outcome == "retry":
+        if publication.attempt_count >= retry_max_attempts():
+            raise HTTPException(409, "Publication has reached the maximum retry attempts")
+        publication.status = "scheduled"
+        publication.next_attempt_at = now
+        publication.error_message = error_message or "Provider outcome reconciled as retryable"
+        operation.status = "pending"
+        operation.last_error = publication.error_message
+        audit(db, publication.channel.workspace_id, "publication", publication.id, "reconciled_retry")
+        sync_content_status(db, publication.content)
+        event_name = "reconciled_retry"
+    else:
+        raise HTTPException(422, "Unsupported reconciliation outcome")
+
+    operation.updated_at = now
+    db.commit()
+    db.refresh(publication)
+    publication_event(event_name, publication.id, status=publication.status, attempt_count=publication.attempt_count, error=publication.error_message)
+    return publication
