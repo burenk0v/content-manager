@@ -42,7 +42,7 @@ def get_content(content_id):
 
 def test_transform_creates_channel_variant_without_mutating_source(monkeypatch):
     content, channel = create_content_and_channel()
-    monkeypatch.setattr("src.app.routers.variants.get_content_transformer", lambda: FakeTransformer())
+    monkeypatch.setattr("src.app.services.variant_service.get_content_transformer", lambda: FakeTransformer())
 
     source_version_id = client.get(
         f"/content/contents/{content['id']}/versions", headers=HEADERS
@@ -67,7 +67,7 @@ def test_transform_creates_channel_variant_without_mutating_source(monkeypatch):
 
 def test_retransform_is_versioned_and_preserves_history(monkeypatch):
     content, channel = create_content_and_channel()
-    monkeypatch.setattr("src.app.routers.variants.get_content_transformer", lambda: FakeTransformer())
+    monkeypatch.setattr("src.app.services.variant_service.get_content_transformer", lambda: FakeTransformer())
 
     path = f"/content/contents/{content['id']}/variants/{channel['id']}/transform"
     first = client.post(path, json={}, headers=HEADERS)
@@ -87,7 +87,7 @@ def test_retransform_is_versioned_and_preserves_history(monkeypatch):
 def test_variant_cannot_use_version_from_another_content(monkeypatch):
     content, channel = create_content_and_channel()
     other, _ = create_content_and_channel()
-    monkeypatch.setattr("src.app.routers.variants.get_content_transformer", lambda: FakeTransformer())
+    monkeypatch.setattr("src.app.services.variant_service.get_content_transformer", lambda: FakeTransformer())
 
     other_version_id = client.get(
         f"/content/contents/{other['id']}/versions", headers=HEADERS
@@ -109,7 +109,7 @@ def test_variant_failure_does_not_persist_partial_row(monkeypatch):
         def transform(self, request):
             raise RuntimeError("provider failed")
 
-    monkeypatch.setattr("src.app.routers.variants.get_content_transformer", lambda: BrokenTransformer())
+    monkeypatch.setattr("src.app.services.variant_service.get_content_transformer", lambda: BrokenTransformer())
     response = client.post(
         f"/content/contents/{content['id']}/variants/{channel['id']}/transform",
         json={},
