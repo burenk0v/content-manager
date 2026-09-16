@@ -1,16 +1,18 @@
 from datetime import datetime
 from typing import Optional
-import hmac
-import os
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from src.app.audit import audit
 from src.app.db import get_db
-from src.app.domain.content_state_machine import InvalidContentTransition, allowed_transitions, transition
-from src.app.models import Content, Publication
+from src.app.routers.foundation import require_service_token
+from src.app.services.content_service import (
+    ContentNotFound,
+    ContentTransitionConflict,
+    bulk_transition as bulk_transition_service,
+    get_workflow_snapshot,
+)
 
 router = APIRouter()
 
@@ -41,32 +43,12 @@ class BulkTransitionOut(BaseModel):
     status: str
 
 
-def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
-    expected = os.environ.get("SERVICE_ACCOUNT_TOKEN")
-    if not expected or not x_service_token or not hmac.compare_digest(x_service_token, expected):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
-
-
 @router.get("/contents/{content_id}/workflow", response_model=WorkflowSnapshot, dependencies=[Depends(require_service_token)])
 def workflow_snapshot(content_id: int, db: Session = Depends(get_db)) -> WorkflowSnapshot:
-    content = db.query(Content).filter(Content.id == content_id).first()
-    if not content:
-        raise HTTPException(404, "Content not found")
-
-    counts: dict[str, int] = {}
-    for publication in db.query(Publication).filter(Publication.content_id == content.id).all():
-        counts[publication.status] = counts.get(publication.status, 0) + 1
-
-    version = content.current_version
-    return WorkflowSnapshot(
-        id=content.id,
-        status=content.status,
-        allowed_transitions=list(allowed_transitions(content.status)),
-        current_version_id=version.id,
-        current_version=version.version,
-        publication_counts=counts,
-        updated_at=content.updated_at,
-    )
+    try:
+        return WorkflowSnapshot(**get_workflow_snapshot(db, content_id))
+    except ContentNotFound as exc:
+        raise HTTPException(404, "Content not found") from exc
 
 
 @router.post("/contents/bulk-transition", response_model=list[BulkTransitionOut], dependencies=[Depends(require_service_token)])
@@ -75,36 +57,17 @@ def bulk_transition(payload: BulkTransitionRequest, db: Session = Depends(get_db
     if len(ids) != len(set(ids)):
         raise HTTPException(422, "content_id values must be unique")
 
-    contents = {content.id: content for content in db.query(Content).filter(Content.id.in_(ids)).all()}
-    missing = [content_id for content_id in ids if content_id not in contents]
-    if missing:
-        raise HTTPException(404, f"Content not found: {missing[0]}")
-
-    changes: list[BulkTransitionOut] = []
     try:
-        for item in payload.items:
-            content = contents[item.content_id]
-            previous = content.status
-            transition(previous, item.status)
-            if previous == item.status:
-                changes.append(BulkTransitionOut(content_id=content.id, previous_status=previous, status=previous))
-                continue
-            content.status = item.status
-            content.updated_at = datetime.utcnow()
-            audit(
-                db,
-                content.workspace_id,
-                "content",
-                content.id,
-                "status_changed",
-                actor_user_id=payload.actor_user_id,
-                event_type="content.status_changed",
-                metadata={"from": previous, "to": item.status, "bulk": True},
-            )
-            changes.append(BulkTransitionOut(content_id=content.id, previous_status=previous, status=item.status))
-    except InvalidContentTransition as exc:
+        changes = bulk_transition_service(
+            db,
+            [(item.content_id, item.status) for item in payload.items],
+            actor_user_id=payload.actor_user_id,
+        )
+    except ContentNotFound as exc:
+        raise HTTPException(404, f"Content not found: {exc.args[0]}") from exc
+    except ContentTransitionConflict as exc:
         db.rollback()
         raise HTTPException(409, detail=str(exc)) from exc
 
     db.commit()
-    return changes
+    return [BulkTransitionOut(**change) for change in changes]
