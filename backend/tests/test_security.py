@@ -1,6 +1,6 @@
 import uuid
 
-from test_foundation_api import HEADERS, client
+from tests.test_foundation_api import HEADERS, client
 
 
 def test_content_api_rejects_missing_service_token():
