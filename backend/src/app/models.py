@@ -50,7 +50,6 @@ class Content(Base):
     id = Column(Integer, primary_key=True, index=True)
     workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String, nullable=True)
-    body = Column(Text, nullable=False)
     language = Column(String, nullable=False)
     status = Column(String, nullable=False, default="draft", index=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -60,6 +59,12 @@ class Content(Base):
     author = relationship("User")
     versions = relationship("ContentVersion", back_populates="content", cascade="all, delete-orphan", order_by="ContentVersion.version")
     publications = relationship("Publication", back_populates="content", cascade="all, delete-orphan")
+
+    @property
+    def body(self) -> str:
+        if not self.versions:
+            raise ValueError(f"Content {self.id} has no versions")
+        return self.versions[-1].body
 
 
 class ContentVersion(Base):
@@ -118,7 +123,7 @@ class PublicationOperation(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(Integer, primary_key=True, index=True)
-    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True)
     actor_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     entity_type = Column(String, nullable=False)
     entity_id = Column(Integer, nullable=True)
