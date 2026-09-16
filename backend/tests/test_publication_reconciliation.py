@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from src.app.models import Publication, PublicationOperation
-from backend.tests.test_foundation_api import HEADERS, TestingSession, client
+from tests.test_foundation_api import HEADERS, TestingSession, client
 
 
 def _create_publication(slug: str) -> int:
