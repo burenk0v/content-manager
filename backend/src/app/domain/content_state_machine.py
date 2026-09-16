@@ -5,7 +5,7 @@ CONTENT_TRANSITIONS: Final[dict[str, frozenset[str]]] = {
     "draft": frozenset({"review"}),
     "review": frozenset({"draft", "approved"}),
     "approved": frozenset({"draft", "scheduled"}),
-    "scheduled": frozenset({"approved", "publishing"}),
+    "scheduled": frozenset({"approved", "draft", "publishing"}),
     "publishing": frozenset({"published", "failed", "scheduled"}),
     "published": frozenset({"archived"}),
     "failed": frozenset({"draft", "scheduled"}),
