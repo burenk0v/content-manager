@@ -22,7 +22,7 @@ def disable_heartbeat(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publish_one_uses_telegram_adapter():
+async def test_publish_one_uses_telegram_adapter(monkeypatch):
     bot = FakeBot()
     completed = []
 
@@ -40,7 +40,7 @@ async def test_publish_one_uses_telegram_adapter():
 
 
 @pytest.mark.asyncio
-async def test_publish_one_splits_oversized_content():
+async def test_publish_one_splits_oversized_content(monkeypatch):
     bot = FakeBot()
     completed = []
 
@@ -144,13 +144,14 @@ async def test_reconcile_unknown_publication_persists_published(monkeypatch):
     def get_reconciler(platform, **kwargs):
         return FakeReconciler()
 
-    async def reconcile(publication_id, result):
-        calls.append((publication_id, result))
+    async def reconcile(publication, result):
+        calls.append((publication, result))
 
     monkeypatch.setattr("src.publication_worker.registry.get_reconciler", get_reconciler)
     monkeypatch.setattr("src.publication_worker.reconcile_publication", reconcile)
-    await reconcile_unknown_publication(FakeBot(), {"id": 11, "channel_platform": "telegram", "channel_external_id": "@channel", "provider_operation_key": "publication:provider-11"})
-    assert calls == [(11, ReconciliationResult(outcome="published", external_id="tg-123"))]
+    publication = {"id": 11, "channel_platform": "telegram", "channel_external_id": "@channel", "provider_operation_key": "publication:provider-11"}
+    await reconcile_unknown_publication(FakeBot(), publication)
+    assert calls == [(publication, ReconciliationResult(outcome="published", external_id="tg-123"))]
 
 
 @pytest.mark.asyncio
@@ -164,10 +165,11 @@ async def test_reconcile_unknown_publication_leaves_unknown_when_provider_cannot
     def get_reconciler(platform, **kwargs):
         return FakeReconciler()
 
-    async def reconcile(publication_id, result):
-        calls.append((publication_id, result))
+    async def reconcile(publication, result):
+        calls.append((publication, result))
 
     monkeypatch.setattr("src.publication_worker.registry.get_reconciler", get_reconciler)
     monkeypatch.setattr("src.publication_worker.reconcile_publication", reconcile)
-    await reconcile_unknown_publication(FakeBot(), {"id": 12, "channel_platform": "telegram", "channel_external_id": "@channel", "provider_operation_key": "publication:provider-12"})
-    assert calls == [(12, ReconciliationResult(outcome="unknown"))]
+    publication = {"id": 12, "channel_platform": "telegram", "channel_external_id": "@channel", "provider_operation_key": "publication:provider-12"}
+    await reconcile_unknown_publication(FakeBot(), publication)
+    assert calls == []
