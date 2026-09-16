@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
+import hmac
 import os
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -34,7 +35,7 @@ class ContentTransitionOut(BaseModel):
 
 def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
     expected = os.environ.get("SERVICE_ACCOUNT_TOKEN")
-    if not expected or x_service_token != expected:
+    if not expected or not x_service_token or not hmac.compare_digest(x_service_token, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
 
 
