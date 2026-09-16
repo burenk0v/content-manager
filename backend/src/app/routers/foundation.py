@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List, Optional
+import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from src.app.db import get_db
 from src.app.domain.content_state_machine import InvalidContentTransition, transition
-from src.app.models import AuditLog, Channel, Content, ContentVersion, Publication, Workspace
+from src.app.models import AuditLog, Channel, Content, ContentVersion, Publication, PublicationOperation, Workspace
 from src.app.observability import publication_event
 from src.app.publication_state import sync_content_status
 from src.app.services import publication_service
@@ -97,6 +98,9 @@ class PublicationOut(BaseModel):
     worker_id: Optional[str]
     external_id: Optional[str]
     idempotency_key: str
+    provider_operation_key: Optional[str]
+    provider_operation_status: Optional[str]
+    provider_operation_attempt_count: int
     error_message: Optional[str]
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -138,11 +142,25 @@ def audit(db: Session, workspace_id: int, entity_type: str, entity_id: int, acti
 
 
 def publication_ready_out(publication: Publication) -> PublicationReadyOut:
+    operation = publication.provider_operation
     return PublicationReadyOut(
         **PublicationOut.model_validate(publication).model_dump(),
+        provider_operation_key=operation.operation_key if operation else None,
+        provider_operation_status=operation.status if operation else None,
+        provider_operation_attempt_count=operation.attempt_count if operation else 0,
         content_body=publication.content.body,
         channel_platform=publication.channel.platform,
         channel_external_id=publication.channel.external_id,
+    )
+
+
+def publication_out(publication: Publication) -> PublicationOut:
+    operation = publication.provider_operation
+    return PublicationOut(
+        **PublicationOut.model_validate(publication).model_dump(exclude={"provider_operation_key", "provider_operation_status", "provider_operation_attempt_count"}),
+        provider_operation_key=operation.operation_key if operation else None,
+        provider_operation_status=operation.status if operation else None,
+        provider_operation_attempt_count=operation.attempt_count if operation else 0,
     )
 
 
@@ -232,11 +250,19 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     key = payload.idempotency_key or f"content:{content.id}:channel:{channel.id}:scheduled:{payload.scheduled_at or 'now'}"
     existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
     if existing:
-        return existing
+        return publication_out(existing)
     if content.status not in {"approved", "scheduled"}:
         raise HTTPException(409, "Content must be approved or scheduled before adding a publication")
     publication = Publication(content_id=content.id, channel_id=channel.id, scheduled_at=payload.scheduled_at, idempotency_key=key, status="scheduled")
     db.add(publication)
+    db.flush()
+    operation = PublicationOperation(
+        publication_id=publication.id,
+        provider=channel.platform.strip().lower(),
+        operation_key=f"publication:{uuid.uuid4().hex}",
+        status="pending",
+    )
+    db.add(operation)
     try:
         db.flush()
     except IntegrityError:
@@ -246,7 +272,7 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
             raise HTTPException(409, "Publication already exists for this content and channel")
         existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
         if existing:
-            return existing
+            return publication_out(existing)
         raise
     if content.status == "approved":
         transition(content.status, "scheduled")
@@ -257,7 +283,7 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
     db.commit()
     db.refresh(publication)
     publication_event("scheduled", publication.id, status=publication.status, attempt_count=publication.attempt_count)
-    return publication
+    return publication_out(publication)
 
 
 @router.get("/publications/ready", response_model=List[PublicationReadyOut], dependencies=[Depends(require_service_token)])
@@ -273,29 +299,29 @@ def list_publications(workspace_id: Optional[int] = None, db: Session = Depends(
     query = db.query(Publication).join(Channel)
     if workspace_id is not None:
         query = query.filter(Channel.workspace_id == workspace_id)
-    return query.order_by(Publication.scheduled_at.asc(), Publication.id.asc()).all()
+    return [publication_out(item) for item in query.order_by(Publication.scheduled_at.asc(), Publication.id.asc()).all()]
 
 
 @router.post("/publications/recover-stale", response_model=List[PublicationOut], dependencies=[Depends(require_service_token)])
 def recover_stale_publications(db: Session = Depends(get_db)):
-    return publication_service.recover_stale(db)
+    return [publication_out(item) for item in publication_service.recover_stale(db)]
 
 
 @router.post("/publications/{publication_id}/claim", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def claim_publication(publication_id: int, payload: PublicationClaim, db: Session = Depends(get_db)):
-    return publication_service.claim(db, publication_id, payload.worker_id)
+    return publication_out(publication_service.claim(db, publication_id, payload.worker_id))
 
 
 @router.post("/publications/{publication_id}/heartbeat", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def heartbeat_publication(publication_id: int, payload: PublicationLease, db: Session = Depends(get_db)):
-    return publication_service.heartbeat(db, publication_id, payload.worker_id, payload.processing_token)
+    return publication_out(publication_service.heartbeat(db, publication_id, payload.worker_id, payload.processing_token))
 
 
 @router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def complete_publication(publication_id: int, payload: PublicationComplete, db: Session = Depends(get_db)):
-    return publication_service.complete(db, publication_id, payload.worker_id, payload.processing_token, payload.external_id)
+    return publication_out(publication_service.complete(db, publication_id, payload.worker_id, payload.processing_token, payload.external_id))
 
 
 @router.post("/publications/{publication_id}/fail", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
 def fail_publication(publication_id: int, payload: PublicationFail, db: Session = Depends(get_db)):
-    return publication_service.fail(db, publication_id, payload.worker_id, payload.processing_token, payload.error_message, payload.retry)
+    return publication_out(publication_service.fail(db, publication_id, payload.worker_id, payload.processing_token, payload.error_message, payload.retry))
