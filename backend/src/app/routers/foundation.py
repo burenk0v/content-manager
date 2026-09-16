@@ -1,5 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
+import hmac
+import os
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -13,9 +15,6 @@ from src.app.domain.content_state_machine import transition
 from src.app.models import Channel, Content, ContentVersion, Publication, PublicationOperation, Workspace
 from src.app.observability import publication_event
 from src.app.services import publication_service
-
-import hmac
-import os
 
 router = APIRouter()
 
