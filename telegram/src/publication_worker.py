@@ -78,15 +78,6 @@ async def fail_publication(publication_id: int, error_message: str, processing_t
     response.raise_for_status()
 
 
-async def mark_provider_outcome_unknown(publication_id: int, error_message: str, processing_token: str) -> None:
-    response = await backend_request(
-        "POST",
-        f"/content/publications/{publication_id}/provider-outcome-unknown",
-        json={"worker_id": WORKER_ID, "processing_token": processing_token, "error_message": error_message[:4000]},
-    )
-    response.raise_for_status()
-
-
 async def recover_stale_publications() -> None:
     response = await backend_request("POST", "/content/publications/recover-stale")
     response.raise_for_status()
@@ -132,7 +123,7 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
     except AmbiguousPublicationError as exc:
         logging.error("Publication %s has ambiguous provider outcome: %s", publication_id, exc)
         try:
-            await mark_provider_outcome_unknown(publication_id, str(exc), processing_token)
+            await fail_publication(publication_id, str(exc), processing_token, retry=False)
         except httpx.HTTPStatusError as persist_exc:
             if persist_exc.response.status_code == 409:
                 logging.warning("Publication %s lease was lost before ambiguous outcome could be persisted", publication_id)
