@@ -1,6 +1,6 @@
 import pytest
 
-from providers.base import AmbiguousPublicationError, ReconciliationResult
+from providers.base import AmbiguousPublicationError, PermanentPublicationError, ReconciliationResult
 from src.publication_worker import publish_one, reconcile_unknown_publication
 
 
@@ -60,7 +60,7 @@ async def test_publish_one_splits_oversized_content(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publish_one_rejects_unsupported_platform(monkeypatch):
+async def test_publish_one_rejects_unsupported_platform_without_retry(monkeypatch):
     bot = FakeBot()
     failures = []
 
@@ -73,7 +73,7 @@ async def test_publish_one_rejects_unsupported_platform(monkeypatch):
     monkeypatch.setattr("src.publication_worker.claim_publication", claim)
     monkeypatch.setattr("src.publication_worker.fail_publication", fail)
     await publish_one(bot, {"id": 9})
-    assert failures == [(9, "Unsupported publication platform: instagram", "token-9", True)]
+    assert failures == [(9, "Unsupported publication platform: instagram", "token-9", False)]
 
 
 @pytest.mark.asyncio
@@ -107,6 +107,28 @@ async def test_publish_one_persists_send_failure_with_retry(monkeypatch):
     monkeypatch.setattr("src.publication_worker.fail_publication", fail)
     await publish_one(bot, {"id": 7})
     assert failures == [(7, "Telegram unavailable", "token-7", True)]
+
+
+@pytest.mark.asyncio
+async def test_publish_one_persists_permanent_failure_without_retry(monkeypatch):
+    bot = FakeBot()
+    failures = []
+
+    class PermanentPublisher:
+        async def publish(self, context):
+            raise PermanentPublicationError("chat was blocked")
+
+    async def claim(publication_id):
+        return {"id": 13, "channel_platform": "telegram", "channel_external_id": "@channel", "content_body": "Hello", "provider_operation_key": "publication:provider-13", "attempt_count": 1, "processing_token": "token-13"}
+
+    async def fail(publication_id, error_message, processing_token, *, retry):
+        failures.append((publication_id, error_message, processing_token, retry))
+
+    monkeypatch.setattr("src.publication_worker.claim_publication", claim)
+    monkeypatch.setattr("src.publication_worker.fail_publication", fail)
+    monkeypatch.setattr("src.publication_worker.registry.get", lambda platform, **kwargs: PermanentPublisher())
+    await publish_one(bot, {"id": 13})
+    assert failures == [(13, "chat was blocked", "token-13", False)]
 
 
 @pytest.mark.asyncio
