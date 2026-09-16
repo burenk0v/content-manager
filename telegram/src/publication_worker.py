@@ -8,6 +8,7 @@ import httpx
 from aiogram import Bot
 
 from providers import PublicationContext, registry
+from providers.base import AmbiguousPublicationError
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
@@ -61,7 +62,7 @@ async def complete_publication(publication_id: int, external_id: str, processing
     response.raise_for_status()
 
 
-async def fail_publication(publication_id: int, error_message: str, processing_token: str) -> None:
+async def fail_publication(publication_id: int, error_message: str, processing_token: str, *, retry: bool) -> None:
     response = await backend_request(
         "POST",
         f"/content/publications/{publication_id}/fail",
@@ -69,7 +70,7 @@ async def fail_publication(publication_id: int, error_message: str, processing_t
             "worker_id": WORKER_ID,
             "processing_token": processing_token,
             "error_message": error_message[:4000],
-            "retry": True,
+            "retry": retry,
         },
     )
     response.raise_for_status()
@@ -110,16 +111,28 @@ async def publish_one(bot: Bot, publication: dict[str, Any]) -> None:
         result = await publisher.publish(
             PublicationContext(
                 publication_id=publication_id,
+                idempotency_key=claimed["idempotency_key"],
                 channel_external_id=claimed["channel_external_id"],
                 content_body=claimed.get("content_body", ""),
             )
         )
         await complete_publication(publication_id, result.external_id, processing_token)
         logging.info("Publication %s published as %s message(s), first message %s", publication_id, result.message_count, result.external_id)
+    except AmbiguousPublicationError as exc:
+        logging.error("Publication %s has ambiguous provider outcome: %s", publication_id, exc)
+        try:
+            await fail_publication(publication_id, str(exc), processing_token, retry=False)
+        except httpx.HTTPStatusError as persist_exc:
+            if persist_exc.response.status_code == 409:
+                logging.warning("Publication %s lease was lost before ambiguous outcome could be persisted", publication_id)
+            else:
+                logging.exception("Failed to persist ambiguous publication outcome for %s", publication_id)
+        except Exception:
+            logging.exception("Failed to persist ambiguous publication outcome for %s", publication_id)
     except Exception as exc:
         logging.exception("Publication %s failed", publication_id)
         try:
-            await fail_publication(publication_id, str(exc), processing_token)
+            await fail_publication(publication_id, str(exc), processing_token, retry=True)
         except httpx.HTTPStatusError as persist_exc:
             if persist_exc.response.status_code == 409:
                 logging.warning("Publication %s lease was lost before failure could be persisted", publication_id)
