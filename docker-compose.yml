@@ -28,6 +28,9 @@ services:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@database:5432/${DB_NAME:-content_manager}
       BACKEND_SECRET_KEY: ${BACKEND_SECRET_KEY}
       SERVICE_ACCOUNT_TOKEN: ${SERVICE_ACCOUNT_TOKEN}
+      AI_GENERATION_PROVIDER: ${AI_GENERATION_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     ports:
       - "8000:8000"
 
