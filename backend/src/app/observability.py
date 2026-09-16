@@ -4,11 +4,14 @@ import uuid
 
 from fastapi import Request
 
+from src.app.audit import set_request_id
+
 logger = logging.getLogger("content_manager.http")
 
 
 async def request_observability(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    set_request_id(request_id)
     started = time.perf_counter()
     response = None
     try:
