@@ -1,7 +1,7 @@
 import pytest
 
-from src.providers.base import AmbiguousPublicationError
-from src.publication_worker import publish_one
+from src.providers.base import AmbiguousPublicationError, ReconciliationResult
+from src.publication_worker import publish_one, reconcile_unknown_publication
 
 
 class FakeBot:
@@ -179,3 +179,65 @@ async def test_publish_one_does_not_retry_ambiguous_provider_outcome(monkeypatch
     await publish_one(bot, {"id": 10})
 
     assert failures == [(10, "provider outcome unknown", "token-10", False)]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_unknown_publication_persists_published(monkeypatch):
+    calls = []
+
+    class FakeReconciler:
+        async def reconcile(self, context):
+            assert context.provider_operation_key == "publication:provider-11"
+            return ReconciliationResult(outcome="published", external_id="tg-123")
+
+    async def get_reconciler(platform, **kwargs):
+        return FakeReconciler()
+
+    async def reconcile(publication_id, payload):
+        calls.append((publication_id, payload))
+
+    monkeypatch.setattr("src.publication_worker.registry.get_reconciler", get_reconciler)
+    monkeypatch.setattr("src.publication_worker.backend_request", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.publication_worker.reconcile_publication", reconcile)
+
+    await reconcile_unknown_publication(
+        FakeBot(),
+        {
+            "id": 11,
+            "channel_platform": "telegram",
+            "channel_external_id": "@channel",
+            "provider_operation_key": "publication:provider-11",
+        },
+    )
+
+    assert calls == [(11, ReconciliationResult(outcome="published", external_id="tg-123"))]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_unknown_publication_leaves_unknown_when_provider_cannot_decide(monkeypatch):
+    calls = []
+
+    class FakeReconciler:
+        async def reconcile(self, context):
+            return ReconciliationResult(outcome="unknown")
+
+    async def get_reconciler(platform, **kwargs):
+        return FakeReconciler()
+
+    async def reconcile(publication_id, result):
+        calls.append((publication_id, result))
+
+    monkeypatch.setattr("src.publication_worker.registry.get_reconciler", get_reconciler)
+    monkeypatch.setattr("src.publication_worker.reconcile_publication", reconcile)
+
+    await reconcile_unknown_publication(
+        FakeBot(),
+        {
+            "id": 12,
+            "channel_platform": "telegram",
+            "channel_external_id": "@channel",
+            "provider_operation_key": "publication:provider-12",
+        },
+    )
+
+    assert calls == [(12, ReconciliationResult(outcome="unknown"))]
