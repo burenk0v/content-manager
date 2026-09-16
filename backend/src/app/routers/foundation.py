@@ -52,6 +52,12 @@ class ContentCreate(BaseModel):
     created_by: Optional[int] = None
 
 
+class ContentUpdate(BaseModel):
+    body: str = Field(..., min_length=1)
+    source: str = Field("human", min_length=1, max_length=50)
+    created_by: Optional[int] = None
+
+
 class ContentOut(BaseModel):
     id: int
     workspace_id: int
@@ -86,6 +92,7 @@ class PublicationCreate(BaseModel):
 class PublicationOut(BaseModel):
     id: int
     content_id: int
+    content_version_id: int
     channel_id: int
     status: str
     scheduled_at: Optional[datetime]
@@ -155,17 +162,13 @@ def audit(db: Session, workspace_id: int, entity_type: str, entity_id: int, acti
 def publication_out(publication: Publication) -> PublicationOut:
     operation = publication.provider_operation
     data = PublicationOut.model_validate(publication).model_dump()
-    data.update(
-        provider_operation_key=operation.operation_key if operation else None,
-        provider_operation_status=operation.status if operation else None,
-        provider_operation_attempt_count=operation.attempt_count if operation else 0,
-    )
+    data.update(provider_operation_key=operation.operation_key if operation else None, provider_operation_status=operation.status if operation else None, provider_operation_attempt_count=operation.attempt_count if operation else 0)
     return PublicationOut(**data)
 
 
 def publication_ready_out(publication: Publication) -> PublicationReadyOut:
     data = publication_out(publication).model_dump()
-    data.update(content_body=publication.content.body, channel_platform=publication.channel.platform, channel_external_id=publication.channel.external_id)
+    data.update(content_body=publication.content_version.body, channel_platform=publication.channel.platform, channel_external_id=publication.channel.external_id)
     return PublicationReadyOut(**data)
 
 
@@ -223,7 +226,7 @@ def list_channels(workspace_id: Optional[int] = None, db: Session = Depends(get_
 def create_content(payload: ContentCreate, db: Session = Depends(get_db)):
     if not db.query(Workspace).filter(Workspace.id == payload.workspace_id).first():
         raise HTTPException(404, "Workspace not found")
-    content = Content(workspace_id=payload.workspace_id, title=payload.title, body=payload.body, language=payload.language.lower(), created_by=payload.created_by, status="draft")
+    content = Content(workspace_id=payload.workspace_id, title=payload.title, language=payload.language.lower(), created_by=payload.created_by, status="draft")
     db.add(content)
     db.flush()
     db.add(ContentVersion(content_id=content.id, version=1, body=payload.body, source=payload.source, created_by=payload.created_by))
@@ -231,6 +234,23 @@ def create_content(payload: ContentCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(content)
     return content
+
+
+@router.post("/contents/{content_id}/versions", response_model=ContentVersionOut, status_code=201, dependencies=[Depends(require_service_token)])
+def create_content_version(content_id: int, payload: ContentUpdate, db: Session = Depends(get_db)):
+    content = db.query(Content).filter(Content.id == content_id).first()
+    if not content:
+        raise HTTPException(404, "Content not found")
+    if content.status not in {"draft", "review", "approved"}:
+        raise HTTPException(409, "Content version cannot be changed in its current state")
+    latest = content.current_version
+    version = ContentVersion(content_id=content.id, version=latest.version + 1, body=payload.body, source=payload.source, created_by=payload.created_by)
+    db.add(version)
+    content.updated_at = datetime.utcnow()
+    audit(db, content.workspace_id, "content_version", content.id, "created")
+    db.commit()
+    db.refresh(version)
+    return version
 
 
 @router.get("/contents", response_model=List[ContentOut], dependencies=[Depends(require_service_token)])
@@ -264,7 +284,7 @@ def create_publication(payload: PublicationCreate, db: Session = Depends(get_db)
         return publication_out(existing)
     if content.status not in {"approved", "scheduled"}:
         raise HTTPException(409, "Content must be approved or scheduled before adding a publication")
-    publication = Publication(content_id=content.id, channel_id=channel.id, scheduled_at=payload.scheduled_at, idempotency_key=key, status="scheduled")
+    publication = Publication(content_id=content.id, content_version_id=content.current_version.id, channel_id=channel.id, scheduled_at=payload.scheduled_at, idempotency_key=key, status="scheduled")
     db.add(publication)
     db.flush()
     db.add(PublicationOperation(publication_id=publication.id, provider=channel.platform.strip().lower(), operation_key=f"publication:{uuid.uuid4().hex}", status="pending"))
@@ -301,14 +321,7 @@ def list_ready_publications(limit: int = 20, db: Session = Depends(get_db)):
 
 @router.get("/publications/unknown", response_model=List[PublicationUnknownOut], dependencies=[Depends(require_service_token)])
 def list_unknown_publications(limit: int = 20, db: Session = Depends(get_db)):
-    query = (
-        db.query(Publication)
-        .join(PublicationOperation)
-        .join(Channel)
-        .filter(Publication.status == "failed", PublicationOperation.status == "unknown", Channel.is_active.is_(True))
-        .order_by(Publication.id.asc())
-        .limit(max(1, min(limit, 100)))
-    )
+    query = db.query(Publication).join(PublicationOperation).join(Channel).filter(Publication.status == "failed", PublicationOperation.status == "unknown", Channel.is_active.is_(True)).order_by(Publication.id.asc()).limit(max(1, min(limit, 100)))
     return [publication_unknown_out(item) for item in query.all()]
 
 
