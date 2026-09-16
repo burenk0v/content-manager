@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .db import Base
@@ -56,6 +56,9 @@ class Content(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    __table_args__ = (
+        CheckConstraint("status IN ('draft', 'review', 'approved', 'scheduled', 'publishing', 'published', 'failed', 'archived')", name="ck_contents_status_valid"),
+    )
     workspace = relationship("Workspace", back_populates="contents")
     author = relationship("User")
     versions = relationship("ContentVersion", back_populates="content", cascade="all, delete-orphan", order_by="ContentVersion.version")
@@ -85,7 +88,10 @@ class ContentVersion(Base):
     source = Column(String, nullable=False, default="human")
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    __table_args__ = (UniqueConstraint("content_id", "version", name="uq_content_versions_content_version"),)
+    __table_args__ = (
+        UniqueConstraint("content_id", "version", name="uq_content_versions_content_version"),
+        CheckConstraint("version > 0", name="ck_content_versions_version_positive"),
+    )
     content = relationship("Content", back_populates="versions")
     author = relationship("User")
     publications = relationship("Publication", back_populates="content_version")
@@ -104,6 +110,9 @@ class GenerationRun(Base):
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
+    __table_args__ = (
+        CheckConstraint("status IN ('running', 'succeeded', 'failed')", name="ck_generation_runs_status_valid"),
+    )
     content = relationship("Content", back_populates="generation_runs")
     content_version = relationship("ContentVersion")
 
@@ -120,7 +129,10 @@ class ContentVariant(Base):
     model = Column(String, nullable=True)
     status = Column(String, nullable=False, default="draft", index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    __table_args__ = (UniqueConstraint("content_version_id", "channel_id", "version", name="uq_content_variants_source_channel_version"),)
+    __table_args__ = (
+        UniqueConstraint("content_version_id", "channel_id", "version", name="uq_content_variants_source_channel_version"),
+        CheckConstraint("version > 0", name="ck_content_variants_version_positive"),
+    )
     content = relationship("Content", back_populates="variants")
     content_version = relationship("ContentVersion", back_populates="variants")
     channel = relationship("Channel", back_populates="variants")
@@ -145,7 +157,13 @@ class Publication(Base):
     idempotency_key = Column(String, unique=True, nullable=False)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    __table_args__ = (Index("uq_publications_content_channel", "content_id", "channel_id", unique=True),)
+    __table_args__ = (
+        Index("uq_publications_content_channel", "content_id", "channel_id", unique=True),
+        Index("ix_publications_ready_queue", "status", "next_attempt_at", "scheduled_at", "id"),
+        Index("ix_publications_stale_processing", "status", "lease_heartbeat_at", "processing_started_at", "id"),
+        CheckConstraint("status IN ('scheduled', 'processing', 'published', 'failed')", name="ck_publications_status_valid"),
+        CheckConstraint("attempt_count >= 0", name="ck_publications_attempt_count_nonnegative"),
+    )
     content = relationship("Content", back_populates="publications")
     content_version = relationship("ContentVersion", back_populates="publications")
     channel = relationship("Channel", back_populates="publications")
@@ -164,6 +182,10 @@ class PublicationOperation(Base):
     last_error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'processing', 'succeeded', 'failed', 'unknown')", name="ck_publication_operations_status_valid"),
+        CheckConstraint("attempt_count >= 0", name="ck_publication_operations_attempt_count_nonnegative"),
+    )
     publication = relationship("Publication", back_populates="provider_operation")
 
 
