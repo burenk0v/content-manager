@@ -165,11 +165,12 @@ async def test_reconcile_unknown_publication_leaves_unknown_when_provider_cannot
     def get_reconciler(platform, **kwargs):
         return FakeReconciler()
 
-    async def reconcile(publication, result):
-        calls.append((publication, result))
+    async def backend_request(method, path, json=None):
+        calls.append((method, path, json))
+        return type("Response", (), {"raise_for_status": lambda self: None})()
 
     monkeypatch.setattr("src.publication_worker.registry.get_reconciler", get_reconciler)
-    monkeypatch.setattr("src.publication_worker.reconcile_publication", reconcile)
+    monkeypatch.setattr("src.publication_worker.backend_request", backend_request)
     publication = {"id": 12, "channel_platform": "telegram", "channel_external_id": "@channel", "provider_operation_key": "publication:provider-12"}
     await reconcile_unknown_publication(FakeBot(), publication)
     assert calls == []
