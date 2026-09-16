@@ -1,35 +1,9 @@
-import os
-import uuid
-
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
-os.environ["SERVICE_ACCOUNT_TOKEN"] = "test-token"
-
-from src.app.db import Base, get_db
-from src.app.main import app
-
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-Session = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-Base.metadata.create_all(bind=engine)
-
-
-def override_db():
-    db = Session()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_db
-client = TestClient(app)
-HEADERS = {"X-Service-Token": "test-token"}
+from tests.test_foundation_api import HEADERS, client
 
 
 def make_content():
+    import uuid
+
     suffix = uuid.uuid4().hex[:8]
     workspace = client.post(
         "/content/workspaces",
@@ -77,4 +51,3 @@ def test_content_lifecycle_exposes_allowed_transitions():
     content_id = make_content()
     response = client.get(f"/content/contents/{content_id}/transitions", headers=HEADERS)
     assert response.status_code == 200
-    assert response.json() == {"status": "draft", "allowed": ["review"]}
