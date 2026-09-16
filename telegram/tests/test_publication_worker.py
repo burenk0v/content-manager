@@ -22,7 +22,7 @@ def disable_heartbeat(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publish_one_uses_telegram_adapter(monkeypatch):
+async def test_publish_one_uses_telegram_adapter():
     bot = FakeBot()
     completed = []
 
@@ -32,7 +32,7 @@ async def test_publish_one_uses_telegram_adapter(monkeypatch):
             "channel_platform": "telegram",
             "channel_external_id": "@channel",
             "content_body": "<b>Hello</b>",
-            "idempotency_key": "publication:7",
+            "provider_operation_key": "publication:provider-7",
             "attempt_count": 1,
             "processing_token": "token-7",
         }
@@ -50,7 +50,7 @@ async def test_publish_one_uses_telegram_adapter(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publish_one_splits_oversized_content(monkeypatch):
+async def test_publish_one_splits_oversized_content():
     bot = FakeBot()
     completed = []
 
@@ -60,7 +60,7 @@ async def test_publish_one_splits_oversized_content(monkeypatch):
             "channel_platform": "telegram",
             "channel_external_id": "@channel",
             "content_body": "x" * 8000,
-            "idempotency_key": "publication:8",
+            "provider_operation_key": "publication:provider-8",
             "attempt_count": 1,
             "processing_token": "token-8",
         }
@@ -90,7 +90,7 @@ async def test_publish_one_rejects_unsupported_platform(monkeypatch):
             "channel_platform": "instagram",
             "channel_external_id": "x",
             "content_body": "Hello",
-            "idempotency_key": "publication:9",
+            "provider_operation_key": "publication:provider-9",
             "attempt_count": 1,
             "processing_token": "token-9",
         }
@@ -129,7 +129,7 @@ async def test_publish_one_persists_send_failure_with_retry(monkeypatch):
             "channel_platform": "telegram",
             "channel_external_id": "@channel",
             "content_body": "Hello",
-            "idempotency_key": "publication:7",
+            "provider_operation_key": "publication:provider-7",
             "attempt_count": 2,
             "processing_token": "token-7",
         }
@@ -155,6 +155,7 @@ async def test_publish_one_does_not_retry_ambiguous_provider_outcome(monkeypatch
 
     class AmbiguousPublisher:
         async def publish(self, context):
+            assert context.provider_operation_key == "publication:provider-10"
             raise AmbiguousPublicationError("provider outcome unknown")
 
     async def claim(publication_id):
@@ -163,7 +164,7 @@ async def test_publish_one_does_not_retry_ambiguous_provider_outcome(monkeypatch
             "channel_platform": "telegram",
             "channel_external_id": "@channel",
             "content_body": "Hello",
-            "idempotency_key": "publication:10",
+            "provider_operation_key": "publication:provider-10",
             "attempt_count": 1,
             "processing_token": "token-10",
         }
