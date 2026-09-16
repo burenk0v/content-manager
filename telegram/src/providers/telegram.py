@@ -28,7 +28,7 @@ class TelegramPublisher:
                     first_message_id = str(sent.message_id)
         except TelegramNetworkError as exc:
             raise AmbiguousPublicationError(
-                f"Telegram publication outcome is unknown for key {context.idempotency_key}"
+                f"Telegram publication outcome is unknown for key {context.provider_operation_key}"
             ) from exc
 
         return PublicationResult(
