@@ -101,6 +101,25 @@ def upgrade():
     op.create_index("ix_publications_next_attempt_at", "publications", ["next_attempt_at"])
     op.create_index("uq_publications_content_channel", "publications", ["content_id", "channel_id"], unique=True)
     op.create_table(
+        "publication_operations",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("publication_id", sa.Integer(), sa.ForeignKey("publications.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("provider", sa.String(), nullable=False),
+        sa.Column("operation_key", sa.String(), nullable=False),
+        sa.Column("status", sa.String(), nullable=False),
+        sa.Column("attempt_count", sa.Integer(), nullable=False),
+        sa.Column("external_id", sa.String(), nullable=True),
+        sa.Column("last_error", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.UniqueConstraint("publication_id"),
+        sa.UniqueConstraint("operation_key"),
+    )
+    op.create_index("ix_publication_operations_id", "publication_operations", ["id"])
+    op.create_index("ix_publication_operations_publication_id", "publication_operations", ["publication_id"])
+    op.create_index("ix_publication_operations_operation_key", "publication_operations", ["operation_key"])
+    op.create_index("ix_publication_operations_status", "publication_operations", ["status"])
+    op.create_table(
         "audit_logs",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("workspace_id", sa.Integer(), sa.ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True),
@@ -118,6 +137,11 @@ def upgrade():
 
 def downgrade():
     op.drop_table("audit_logs")
+    op.drop_index("ix_publication_operations_status", table_name="publication_operations")
+    op.drop_index("ix_publication_operations_operation_key", table_name="publication_operations")
+    op.drop_index("ix_publication_operations_publication_id", table_name="publication_operations")
+    op.drop_index("ix_publication_operations_id", table_name="publication_operations")
+    op.drop_table("publication_operations")
     op.drop_index("uq_publications_content_channel", table_name="publications")
     op.drop_index("ix_publications_next_attempt_at", table_name="publications")
     op.drop_index("ix_publications_lease_heartbeat_at", table_name="publications")
