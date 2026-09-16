@@ -6,13 +6,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from src.app.audit import audit
 from src.app.db import get_db
 from src.app.domain.content_state_machine import (
     InvalidContentTransition,
     allowed_transitions,
     transition,
 )
-from src.app.models import AuditLog, Content
+from src.app.models import Content
 
 router = APIRouter()
 
@@ -67,15 +68,15 @@ def transition_content(content_id: int, payload: ContentTransition, db: Session 
 
     content.status = next_status
     content.updated_at = datetime.utcnow()
-    db.add(
-        AuditLog(
-            workspace_id=content.workspace_id,
-            actor_user_id=payload.actor_user_id,
-            entity_type="content",
-            entity_id=content.id,
-            action="status_changed",
-            metadata_json={"from": previous_status, "to": next_status},
-        )
+    audit(
+        db,
+        content.workspace_id,
+        "content",
+        content.id,
+        "status_changed",
+        actor_user_id=payload.actor_user_id,
+        event_type="content.status_changed",
+        metadata={"from": previous_status, "to": next_status},
     )
     db.commit()
     db.refresh(content)
