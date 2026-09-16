@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, or_, update
 from sqlalchemy.orm import Session
 
-from src.app.models import AuditLog, Content, Publication
+from src.app.models import AuditLog, Content, Publication, PublicationOperation
 from src.app.observability import publication_event
 from src.app.publication_state import sync_content_status
 
@@ -96,6 +96,11 @@ def recover_stale(db: Session) -> list[Publication]:
         if result.rowcount != 1:
             continue
         publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
+        operation = publication.provider_operation
+        if operation and operation.status == "processing":
+            operation.status = "failed"
+            operation.last_error = "Provider operation lease recovered before completion"
+            operation.updated_at = now
         sync_content_status(db, publication.content)
         recovered.append(publication)
     if recovered:
@@ -127,6 +132,17 @@ def claim(db: Session, publication_id: int, worker_id: str) -> Publication:
             raise HTTPException(404, "Publication not found")
         raise HTTPException(409, "Publication is not claimable")
     publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
+    operation = publication.provider_operation
+    if operation is None:
+        db.rollback()
+        raise HTTPException(500, "Publication provider operation is missing")
+    if operation.status == "unknown":
+        db.rollback()
+        raise HTTPException(409, "Provider operation outcome is unknown and requires reconciliation")
+    operation.status = "processing"
+    operation.attempt_count += 1
+    operation.last_error = None
+    operation.updated_at = now
     if publication.content.status != "publishing":
         transition_content(db, publication.content, "publishing")
     response = publication
@@ -168,6 +184,12 @@ def complete(db: Session, publication_id: int, worker_id: str, processing_token:
         db.rollback()
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
     publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
+    operation = publication.provider_operation
+    if operation:
+        operation.status = "succeeded"
+        operation.external_id = external_id
+        operation.last_error = None
+        operation.updated_at = now
     sync_content_status(db, publication.content)
     audit(db, publication.channel.workspace_id, "publication", publication.id, "published")
     event = PublicationEvent("completed", publication.id, publication.status, attempt_count=publication.attempt_count)
@@ -197,6 +219,11 @@ def fail(db: Session, publication_id: int, worker_id: str, processing_token: str
         db.rollback()
         raise HTTPException(409, "Publication lease is no longer owned by this worker")
     publication = db.query(Publication).populate_existing().filter(Publication.id == publication_id).first()
+    operation = publication.provider_operation
+    if operation:
+        operation.status = "failed"
+        operation.last_error = error_message
+        operation.updated_at = now
     sync_content_status(db, publication.content)
     audit(db, publication.channel.workspace_id, "publication", publication.id, "failed")
     event_name = "retry_scheduled" if target_status == "scheduled" else "failed"
@@ -204,4 +231,23 @@ def fail(db: Session, publication_id: int, worker_id: str, processing_token: str
     db.commit()
     db.refresh(publication)
     publication_event(event.event, event.publication_id, status=event.status, attempt_count=event.attempt_count, error=event.error)
+    return publication
+
+
+def mark_provider_outcome_unknown(db: Session, publication_id: int, processing_token: str, error_message: str) -> Publication:
+    now = datetime.utcnow()
+    publication = db.query(Publication).filter(Publication.id == publication_id).first()
+    if not publication:
+        raise HTTPException(404, "Publication not found")
+    if publication.status != "processing" or publication.processing_token != processing_token:
+        raise HTTPException(409, "Publication lease is no longer owned by this worker")
+    operation = publication.provider_operation
+    if operation:
+        operation.status = "unknown"
+        operation.last_error = error_message
+        operation.updated_at = now
+    publication.error_message = error_message
+    db.commit()
+    db.refresh(publication)
+    publication_event("provider_outcome_unknown", publication.id, status=publication.status, attempt_count=publication.attempt_count, error=error_message)
     return publication
