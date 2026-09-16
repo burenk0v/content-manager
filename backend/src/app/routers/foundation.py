@@ -11,7 +11,6 @@ from src.app.db import get_db
 from src.app.domain.content_state_machine import transition
 from src.app.models import AuditLog, Channel, Content, ContentVersion, Publication, PublicationOperation, Workspace
 from src.app.observability import publication_event
-from src.app.publication_state import sync_content_status
 from src.app.services import publication_service
 
 router = APIRouter()
@@ -155,8 +154,16 @@ def require_service_token(x_service_token: Optional[str] = Header(None)) -> None
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
 
 
-def audit(db: Session, workspace_id: int, entity_type: str, entity_id: int, action: str) -> None:
-    db.add(AuditLog(workspace_id=workspace_id, entity_type=entity_type, entity_id=entity_id, action=action))
+def audit(db: Session, workspace_id: int, entity_type: str, entity_id: int, action: str, metadata: Optional[dict] = None) -> None:
+    db.add(
+        AuditLog(
+            workspace_id=workspace_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action=action,
+            metadata_json=metadata,
+        )
+    )
 
 
 def publication_out(publication: Publication) -> PublicationOut:
@@ -243,11 +250,23 @@ def create_content_version(content_id: int, payload: ContentUpdate, db: Session 
         raise HTTPException(404, "Content not found")
     if content.status not in {"draft", "review", "approved"}:
         raise HTTPException(409, "Content version cannot be changed in its current state")
+
+    previous_status = content.status
     latest = content.current_version
     version = ContentVersion(content_id=content.id, version=latest.version + 1, body=payload.body, source=payload.source, created_by=payload.created_by)
     db.add(version)
+
+    metadata = {"version": version.version, "source": payload.source}
+    if previous_status == "approved":
+        transition(previous_status, "draft")
+        content.status = "draft"
+        metadata["approval_invalidated"] = True
+        metadata["from_status"] = previous_status
+        metadata["to_status"] = "draft"
+        audit(db, content.workspace_id, "content", content.id, "status_changed", metadata)
+
     content.updated_at = datetime.utcnow()
-    audit(db, content.workspace_id, "content_version", content.id, "created")
+    audit(db, content.workspace_id, "content_version", content.id, "created", metadata)
     db.commit()
     db.refresh(version)
     return version
