@@ -39,6 +39,10 @@ def test_transform_creates_channel_variant_without_mutating_source(monkeypatch):
     content, channel = create_content_and_channel()
     monkeypatch.setattr("src.app.routers.variants.get_content_transformer", lambda: FakeTransformer())
 
+    source_version_id = client.get(
+        f"/content/contents/{content['id']}/versions", headers=HEADERS
+    ).json()[0]["id"]
+
     response = client.post(
         f"/content/contents/{content['id']}/variants/{channel['id']}/transform",
         json={"instructions": "Keep it concise"},
@@ -47,7 +51,7 @@ def test_transform_creates_channel_variant_without_mutating_source(monkeypatch):
     assert response.status_code == 201
     variant = response.json()
     assert variant["content_id"] == content["id"]
-    assert variant["content_version_id"] == 1
+    assert variant["content_version_id"] == source_version_id
     assert variant["version"] == 1
     assert variant["body"] == "[telegram] Canonical text"
     assert variant["status"] == "draft"
@@ -81,9 +85,12 @@ def test_variant_cannot_use_version_from_another_content(monkeypatch):
     other, _ = create_content_and_channel()
     monkeypatch.setattr("src.app.routers.variants.get_content_transformer", lambda: FakeTransformer())
 
+    other_version_id = client.get(
+        f"/content/contents/{other['id']}/versions", headers=HEADERS
+    ).json()[0]["id"]
     response = client.post(
         f"/content/contents/{content['id']}/variants/{channel['id']}/transform",
-        json={"content_version_id": 2},
+        json={"content_version_id": other_version_id},
         headers=HEADERS,
     )
     assert response.status_code == 404
