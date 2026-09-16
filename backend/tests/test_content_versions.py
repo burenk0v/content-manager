@@ -1,6 +1,6 @@
 import uuid
 
-from test_foundation_api import HEADERS, TestingSession, client
+from backend.tests.test_foundation_api import HEADERS, TestingSession, client
 from src.app.models import Content, ContentVersion, Publication
 
 
