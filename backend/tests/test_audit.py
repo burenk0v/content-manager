@@ -157,7 +157,10 @@ def test_publication_audit_contains_attempt_and_provider_outcome_events():
         )
         assert [event.event_type for event in events] == [
             "publication.scheduled",
+            "publication.claimed",
             "publication.published",
         ]
+        assert events[1].metadata_json == {"worker_id": "audit-worker", "attempt_count": 1}
+        assert events[2].metadata_json["external_id"] == "tg-audit"
     finally:
         db.close()
