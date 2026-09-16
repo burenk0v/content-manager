@@ -27,9 +27,16 @@ def sync_content_status(db: Session, content: Content) -> str:
     if content.status == target:
         return target
 
-    transition(content.status, target)
     previous = content.status
-    content.status = target
+    if target == "published" and previous == "failed":
+        # The publication records are the source of truth for the aggregate state.
+        # Reconciliation may discover a successful provider delivery after the
+        # publication had been marked failed because its outcome was ambiguous.
+        content.status = target
+    else:
+        transition(previous, target)
+        content.status = target
+
     content.updated_at = datetime.utcnow()
     db.add(
         AuditLog(
