@@ -25,9 +25,6 @@ def make_content() -> int:
 
 
 def test_generate_creates_version_and_invalidates_approval(monkeypatch):
-    from src.app import routers
-    from src.app.routers import ai
-
     content_id = make_content()
     transition = client.post(
         f"/content/contents/{content_id}/transition",
@@ -49,7 +46,7 @@ def test_generate_creates_version_and_invalidates_approval(monkeypatch):
             assert prompt == "Create a better post"
             return "Generated version"
 
-    monkeypatch.setattr(ai, "get_generation_provider", lambda: FakeProvider())
+    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: FakeProvider())
     response = client.post(
         f"/content/contents/{content_id}/generate",
         json={"prompt": "Create a better post", "model": "fake-model"},
@@ -70,8 +67,6 @@ def test_generate_creates_version_and_invalidates_approval(monkeypatch):
 
 
 def test_generation_failure_is_recorded(monkeypatch):
-    from src.app.routers import ai
-
     content_id = make_content()
 
     class FailingProvider:
@@ -81,7 +76,7 @@ def test_generation_failure_is_recorded(monkeypatch):
             from src.app.ai_generation import GenerationError
             raise GenerationError("temporary provider failure")
 
-    monkeypatch.setattr(ai, "get_generation_provider", lambda: FailingProvider())
+    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: FailingProvider())
     response = client.post(
         f"/content/contents/{content_id}/generate",
         json={"prompt": "Generate"},
