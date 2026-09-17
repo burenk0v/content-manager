@@ -96,11 +96,7 @@ def test_autonomous_profile_generation_records_provider_failure(monkeypatch):
         headers=HEADERS,
     )
     assert response.status_code == 502
-    runs = client.get(
-        f"/content/contents/{response.json()['content_id']}/generations",
-        headers=HEADERS,
-    ) if response.headers.get("content-type", "").startswith("application/json") else None
-    # The API intentionally returns only an HTTP error body, so inspect the generated content list instead.
+    # The API returns an HTTP error body; inspect the persisted content and run instead.
     contents = client.get(
         f"/content/contents?workspace_id={profile['workspace_id']}",
         headers=HEADERS,
