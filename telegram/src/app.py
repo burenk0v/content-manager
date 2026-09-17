@@ -11,73 +11,19 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from openai_client import OpenAIClient
-from publication_api import create_publication_from_draft
 from publication_worker import publication_worker
 from scheduler import (
     backend_request,
-    delete_draft,
-    fetch_draft,
-    fetch_schedule,
-    generate_and_send_draft,
+    fetch_profile,
+    generate_and_send_profile,
+    prepare_telegram_content,
+    request_profile_regeneration,
     schedule_worker,
-    update_draft_status,
+    transition_content,
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMINS = [int(x) for x in os.getenv("ADMINS", "").split(",") if x.strip()]
-
-
-def prepare_telegram_content(text: str) -> str:
-    text = (text or "").strip()
-    if not text:
-        return text
-    if re.search(r"</?[a-zA-Z][^>]*>", text):
-        allowed = {"b", "i", "u", "code", "pre", "a"}
-        stack: list[str] = []
-
-        def replace(match: re.Match[str]) -> str:
-            raw, tag, attrs = match.group(0), match.group(1).lower(), match.group(2) or ""
-            if raw.startswith("</"):
-                if tag in allowed and stack and stack[-1] == tag:
-                    stack.pop()
-                    return f"</{tag}>"
-                return ""
-            if tag not in allowed:
-                return ""
-            if tag == "a":
-                href = re.search(r'href=["\']([^"\']+)["\']', attrs, re.I)
-                if not href or not href.group(1).startswith(("http://", "https://")):
-                    return ""
-                stack.append(tag)
-                return f'<a href="{escape(href.group(1), quote=True)}">'
-            stack.append(tag)
-            return f"<{tag}>"
-
-        result = re.sub(r"</?([a-zA-Z0-9]+)([^>]*)>", replace, text)
-        while stack:
-            result += f"</{stack.pop()}>"
-        return result
-    lines, in_code, code_lines = [], False, []
-    for line in text.splitlines():
-        if line.strip().startswith("```"):
-            if in_code:
-                lines.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
-                code_lines = []
-            in_code = not in_code
-            continue
-        if in_code:
-            code_lines.append(line)
-            continue
-        rendered = escape(line)
-        rendered = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', rendered)
-        rendered = re.sub(r'__(.+?)__', r'<b>\1</b>', rendered)
-        rendered = re.sub(r'\*(.+?)\*', r'<i>\1</i>', rendered)
-        rendered = re.sub(r'_(.+?)_', r'<i>\1</i>', rendered)
-        rendered = re.sub(r'`([^`]+)`', r'<code>\1</code>', rendered)
-        lines.append("• " + rendered[2:] if rendered.startswith("- ") else rendered)
-    if in_code:
-        lines.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
-    return "\n".join(lines)
 
 
 def is_admin(user_id: int) -> bool:
@@ -101,6 +47,16 @@ async def fetch_collection(path: str) -> list[dict]:
     return payload if isinstance(payload, list) else []
 
 
+async def create_publication(content_id: int, channel_id: int) -> dict:
+    response = await backend_request(
+        "POST",
+        "/content/publications",
+        json={"content_id": content_id, "channel_id": channel_id},
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 async def send_console(message: types.Message, text: str) -> None:
     await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
@@ -122,8 +78,8 @@ async def main() -> None:
             "<b>Команды:</b>\n"
             "/status — состояние системы\n"
             "/queue — публикации на approval\n"
-            "/schedules — расписания\n"
-            "/generate &lt;id&gt; — запустить генерацию сейчас\n"
+            "/profiles — контент-профили\n"
+            "/generate &lt;id&gt; — запустить генерацию профиля сейчас\n"
             "/ask &lt;запрос&gt; — задать AI вопрос\n"
             "/web — открыть настройки",
         )
@@ -148,18 +104,18 @@ async def main() -> None:
         if not is_admin(message.from_user.id):
             return
         try:
-            schedules = await fetch_collection("/content/schedules")
-            drafts = await fetch_collection("/content/drafts")
+            profiles = await fetch_collection("/content/profiles")
+            contents = await fetch_collection("/content/contents")
             publications = await fetch_collection("/content/publications")
-            active = [item for item in schedules if item.get("is_active")]
-            pending = [item for item in drafts if item.get("status") == "pending"]
+            active = [item for item in profiles if item.get("is_active")]
+            review = [item for item in contents if item.get("status") == "review"]
             scheduled = [item for item in publications if item.get("status") == "scheduled"]
             published = [item for item in publications if item.get("status") == "published"]
             await send_console(
                 message,
                 "<b>System status</b>\n\n"
-                f"Schedules: <b>{len(active)}</b> active / {len(schedules)} total\n"
-                f"Awaiting approval: <b>{len(pending)}</b>\n"
+                f"Profiles: <b>{len(active)}</b> active / {len(profiles)} total\n"
+                f"Awaiting approval: <b>{len(review)}</b>\n"
                 f"Scheduled publications: <b>{len(scheduled)}</b>\n"
                 f"Published: <b>{len(published)}</b>",
             )
@@ -167,38 +123,37 @@ async def main() -> None:
             logging.exception("Failed to build Telegram status")
             await message.answer("Не удалось получить состояние системы.")
 
-    @dp.message(Command("schedules"))
-    async def schedules(message: types.Message):
+    @dp.message(Command("profiles"))
+    async def profiles(message: types.Message):
         if not is_admin(message.from_user.id):
             return
         try:
-            items = await fetch_collection("/content/schedules")
+            items = await fetch_collection("/content/profiles")
             if not items:
-                await message.answer("Расписаний пока нет.")
+                await message.answer("Контент-профилей пока нет.")
                 return
-            lines = ["<b>Schedules</b>"]
+            lines = ["<b>Content profiles</b>"]
             for item in items:
                 state = "🟢" if item.get("is_active") else "⚪️"
                 lines.append(f"{state} <b>#{item.get('id')}</b> {escape(str(item.get('name', 'Unnamed')))}")
             await send_console(message, "\n".join(lines))
         except Exception:
-            logging.exception("Failed to fetch schedules")
-            await message.answer("Не удалось получить расписания.")
+            logging.exception("Failed to fetch content profiles")
+            await message.answer("Не удалось получить профили.")
 
     @dp.message(Command("queue"))
     async def queue(message: types.Message):
         if not is_admin(message.from_user.id):
             return
         try:
-            drafts = [item for item in await fetch_collection("/content/drafts") if item.get("status") == "pending"]
-            if not drafts:
+            contents = [item for item in await fetch_collection("/content/contents") if item.get("status") == "review"]
+            if not contents:
                 await message.answer("Очередь approval пуста.")
                 return
             lines = ["<b>Approval queue</b>"]
-            for draft in drafts[:20]:
-                topic = escape(str(draft.get("topic_name") or "Без темы"))
-                schedule_id = draft.get("schedule_id", "?")
-                lines.append(f"📝 <b>#{draft.get('id')}</b> {topic} · schedule #{schedule_id}")
+            for content in contents[:20]:
+                topic = escape(str(content.get("title") or "Без темы"))
+                lines.append(f"📝 <b>#{content.get('id')}</b> {topic}")
             await send_console(message, "\n".join(lines))
         except Exception:
             logging.exception("Failed to fetch approval queue")
@@ -210,16 +165,16 @@ async def main() -> None:
             return
         parts = (message.text or "").split(maxsplit=1)
         if len(parts) != 2 or not parts[1].strip().isdigit():
-            await message.answer("Использование: /generate <schedule_id>")
+            await message.answer("Использование: /generate <profile_id>")
             return
-        schedule_id = int(parts[1].strip())
-        schedule = await fetch_schedule(schedule_id)
-        if not schedule or not schedule.get("is_active", False):
-            await message.answer("Расписание не найдено или выключено.")
+        profile_id = int(parts[1].strip())
+        profile = await fetch_profile(profile_id)
+        if not profile or not profile.get("is_active"):
+            await message.answer("Профиль не найден или выключен.")
             return
-        await message.answer(f"Запускаю генерацию для <b>{escape(str(schedule.get('name', schedule_id)))}</b>…", parse_mode="HTML")
-        if not await generate_and_send_draft(bot, ai_client, schedule, ADMINS):
-            await message.answer("Генерация не удалась. Проверьте настройки AI и расписания.")
+        await message.answer(f"Запускаю генерацию для <b>{escape(str(profile.get('name', profile_id)))}</b>…", parse_mode="HTML")
+        if not await generate_and_send_profile(bot, ai_client, profile, ADMINS):
+            await message.answer("Генерация не удалась. Проверьте настройки профиля и AI.")
 
     @dp.message()
     async def messages(message: types.Message):
@@ -239,58 +194,43 @@ async def main() -> None:
             await callback.answer("Access denied.", show_alert=True)
             return
         data = callback.data or ""
-        if data.startswith("approve:"):
-            draft_id = int(data.split(":", 1)[1])
-            draft = await fetch_draft(draft_id)
-            if not draft or draft.get("status") != "pending":
-                await callback.answer("Draft not found or already processed.", show_alert=True)
-                return
-            schedule = await fetch_schedule(draft["schedule_id"])
-            if not schedule:
-                await callback.answer("Schedule not found.", show_alert=True)
-                return
-            try:
-                publication = await create_publication_from_draft(draft_id)
+        try:
+            if data.startswith("approve:"):
+                _, content_id_raw, profile_id_raw = data.split(":", 2)
+                content_id = int(content_id_raw)
+                profile = await fetch_profile(int(profile_id_raw))
+                if not profile:
+                    await callback.answer("Профиль не найден.", show_alert=True)
+                    return
+                await transition_content(content_id, "approved")
+                publication = await create_publication(content_id, profile["channel_id"])
                 await callback.answer("Post scheduled for publication.")
-                await bot.send_message(callback.from_user.id, f"Publication #{publication['id']} queued for {schedule['name']}.")
-                with contextlib.suppress(Exception):
-                    await bot.delete_message(callback.message.chat.id, callback.message.message_id)
-            except Exception:
-                logging.exception("Failed to queue draft %s", draft_id)
-                await callback.answer("Failed to schedule post.", show_alert=True)
-        elif data.startswith("reject:"):
-            draft_id = int(data.split(":", 1)[1])
-            draft = await fetch_draft(draft_id)
-            if not draft or draft.get("status") != "pending":
-                await callback.answer("Draft not found or already processed.", show_alert=True)
-                return
-            try:
-                await update_draft_status(draft_id, "rejected")
-                await callback.answer("Draft rejected.")
-            finally:
-                with contextlib.suppress(Exception):
-                    await bot.delete_message(callback.message.chat.id, callback.message.message_id)
-        elif data.startswith("delete:"):
-            draft_id = int(data.split(":", 1)[1])
-            try:
-                await delete_draft(draft_id)
-                await callback.answer("Draft deleted.")
-            except Exception:
-                await callback.answer("Failed to delete draft.", show_alert=True)
-            finally:
-                with contextlib.suppress(Exception):
-                    await bot.delete_message(callback.message.chat.id, callback.message.message_id)
-        elif data.startswith("regenerate:"):
-            schedule_id = int(data.split(":", 1)[1])
-            schedule = await fetch_schedule(schedule_id)
-            if not schedule or not schedule.get("is_active", False):
-                await callback.answer("Schedule is unavailable.", show_alert=True)
-                return
-            await callback.answer("Regenerating draft...")
-            if not await generate_and_send_draft(bot, ai_client, schedule, ADMINS):
-                await bot.send_message(callback.from_user.id, f"Не удалось перегенерировать расписание {schedule['name']}.")
-        else:
-            await callback.answer()
+                await bot.send_message(callback.from_user.id, f"Publication #{publication['id']} queued for {profile['name']}.")
+            elif data.startswith("reject:"):
+                content_id = int(data.split(":", 1)[1])
+                await transition_content(content_id, "draft")
+                await callback.answer("Post rejected.")
+            elif data.startswith("regenerate:"):
+                _, profile_id_raw, content_id_raw = data.split(":", 2)
+                profile_id = int(profile_id_raw)
+                content_id = int(content_id_raw)
+                profile = await fetch_profile(profile_id)
+                if not profile or not profile.get("is_active"):
+                    await callback.answer("Профиль недоступен.", show_alert=True)
+                    return
+                await transition_content(content_id, "draft")
+                await request_profile_regeneration(profile_id)
+                await callback.answer("Regenerating…")
+                if not await generate_and_send_profile(bot, ai_client, profile, ADMINS):
+                    await bot.send_message(callback.from_user.id, f"Не удалось перегенерировать профиль {profile['name']}.")
+            else:
+                await callback.answer()
+        except Exception:
+            logging.exception("Telegram approval action failed: %s", data)
+            await callback.answer("Операция не выполнена. Проверьте состояние записи.", show_alert=True)
+        finally:
+            with contextlib.suppress(Exception):
+                await bot.delete_message(callback.message.chat.id, callback.message.message_id)
 
     schedule_task = asyncio.create_task(schedule_worker(bot, ai_client, ADMINS))
     publication_task = asyncio.create_task(publication_worker(bot))
