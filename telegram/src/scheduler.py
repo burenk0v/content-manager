@@ -51,8 +51,11 @@ async def request_profile_regeneration(profile_id: int) -> dict[str, Any]:
     return response.json()
 
 
-async def claim_profile_run(profile_id: int) -> dict[str, Any]:
-    response = await backend_request("POST", f"/content/profiles/{profile_id}/claim")
+async def claim_profile_run(profile_id: int, *, force: bool = False) -> dict[str, Any]:
+    path = f"/content/profiles/{profile_id}/claim"
+    if force:
+        path += "?force=true"
+    response = await backend_request("POST", path)
     if response.status_code == 409:
         return {}
     response.raise_for_status()
@@ -227,9 +230,9 @@ def build_generation_prompt(profile: dict[str, Any], used_names: set[str]) -> st
     )
 
 
-async def generate_and_send_profile(bot: Bot, ai_client: OpenAIClient, profile: dict[str, Any], admins: list[int]) -> bool:
+async def generate_and_send_profile(bot: Bot, ai_client: OpenAIClient, profile: dict[str, Any], admins: list[int], *, force: bool = False) -> bool:
     try:
-        profile = await claim_profile_run(profile["id"])
+        profile = await claim_profile_run(profile["id"], force=force)
     except Exception:
         logging.exception("Failed to claim profile %s", profile["id"])
         return False
