@@ -29,6 +29,7 @@ def generate_content(
     prompt: str,
     system_message: str | None = None,
     model: str | None = None,
+    transform_generated=None,
 ) -> GenerationRun:
     content = db.query(Content).filter(Content.id == content_id).first()
     if not content:
@@ -52,7 +53,9 @@ def generate_content(
         provider_name = provider.name
         run.provider = provider_name
         generated = provider.generate(prompt=prompt, system_message=system_message, model=model)
-    except GenerationError as exc:
+        if transform_generated is not None:
+            generated = transform_generated(generated)
+    except (GenerationError, GenerationProviderFailure) as exc:
         run.status = "failed"
         run.error_message = str(exc)
         run.completed_at = datetime.utcnow()
