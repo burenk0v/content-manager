@@ -8,7 +8,7 @@ This system provides:
 
 - **REST API** (FastAPI backend) for content management, AI generation, channel transformation, and scheduled posting
 - **Admin Dashboard** (Django frontend) for UI management
-- **Telegram Bot** (Aiogram) for admin commands and scheduled publishing
+- **Telegram Bot** (Aiogram) for approval, operations, and scheduler orchestration
 - **PostgreSQL Database** for persistent data storage
 
 ## Architecture
@@ -71,10 +71,10 @@ This system provides:
 
 - **Features**:
   - `/start` — welcome message with WebApp button
-  - `/ask <prompt>` — AI-generated content via OpenAI
   - Admin commands for manual triggers
-  - Automatic schedule checking and publishing
-  - Fetches drafts and schedules from backend
+  - Automatic profile schedule checking
+  - Triggers the backend generation pipeline and delivers approval notifications
+  - Publication worker orchestration
 - **Integration**: Uses `SERVICE_ACCOUNT_TOKEN` for backend authentication
 
 #### Database (PostgreSQL)
@@ -128,9 +128,9 @@ Required configuration:
 
 AI generation is part of the content lifecycle rather than a separate draft system. A generation request creates a durable `GenerationRun` and, on success, a new `ContentVersion`.
 
-The canonical flow is:
+The autonomous flow is:
 
-`draft/review/approved/scheduled → generate → new ContentVersion → draft → review → approved → scheduled → published`
+`Content Profile → scheduler claim → GenerationRun → ContentVersion → draft → Telegram review → approved → scheduled → published`
 
 Regeneration never overwrites an existing version. When generation happens from `review`, `approved`, or `scheduled`, the new version invalidates the previous approval and returns the content to `draft` for human review.
 
@@ -139,7 +139,7 @@ Regeneration never overwrites an existing version. When generation happens from 
 - `POST /content/contents/{content_id}/generate` — generate a new version
 - `GET /content/contents/{content_id}/generations` — inspect generation history
 
-Generation providers are isolated behind a small backend contract. The current production provider is OpenAI. Provider failures are persisted as failed generation runs and do not create a partial content version.
+The scheduler does not call an AI SDK directly. It claims a profile and invokes the backend generation service, which creates the durable `GenerationRun`, calls the configured provider through the backend provider contract, validates autonomous output, and persists a new `ContentVersion`. Provider failures are persisted as failed generation runs and the profile is re-queued for a later attempt. The current production provider is OpenAI.
 
 ## Channel Transformation
 

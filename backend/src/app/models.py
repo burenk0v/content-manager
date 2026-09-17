@@ -101,9 +101,9 @@ class Content(Base):
 
     @property
     def body(self) -> str:
-        if not self.versions:
-            raise ValueError(f"Content {self.id} has no versions")
-        return self.versions[-1].body
+        # A durable generation run may exist before its first ContentVersion.
+        # API consumers should see an empty body until generation succeeds.
+        return self.versions[-1].body if self.versions else ""
 
     @property
     def current_version(self) -> "ContentVersion":

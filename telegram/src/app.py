@@ -10,7 +10,6 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from openai_client import OpenAIClient
 from publication_worker import publication_worker
 from scheduler import (
     backend_request,
@@ -64,7 +63,6 @@ async def send_console(message: types.Message, text: str) -> None:
 async def main() -> None:
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
-    ai_client = OpenAIClient()
 
     @dp.message(Command(commands=["start", "help"]))
     async def start(message: types.Message):
@@ -173,7 +171,7 @@ async def main() -> None:
             await message.answer("Профиль не найден или выключен.")
             return
         await message.answer(f"Запускаю генерацию для <b>{escape(str(profile.get('name', profile_id)))}</b>…", parse_mode="HTML")
-        if not await generate_and_send_profile(bot, ai_client, profile, ADMINS, force=True):
+        if not await generate_and_send_profile(bot, profile, ADMINS, force=True):
             await message.answer("Генерация не удалась. Проверьте настройки профиля и AI.")
 
     @dp.message()
@@ -186,7 +184,7 @@ async def main() -> None:
             if not prompt:
                 await message.answer("Please provide a request after the /ask command")
                 return
-            await message.answer(prepare_telegram_content(ai_client.chat(prompt)), parse_mode="HTML")
+            await message.answer("AI Q&A is not part of the autonomous generation pipeline. Configure a content profile and use /generate <profile_id>.")
 
     @dp.callback_query()
     async def callbacks(callback: types.CallbackQuery):
@@ -232,7 +230,7 @@ async def main() -> None:
             with contextlib.suppress(Exception):
                 await bot.delete_message(callback.message.chat.id, callback.message.message_id)
 
-    schedule_task = asyncio.create_task(schedule_worker(bot, ai_client, ADMINS))
+    schedule_task = asyncio.create_task(schedule_worker(bot, ADMINS))
     publication_task = asyncio.create_task(publication_worker(bot))
     try:
         await dp.start_polling(bot)
