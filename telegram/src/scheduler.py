@@ -78,6 +78,7 @@ async def create_content(profile: dict[str, Any], topic_name: str, generated_tex
         "/content/contents",
         json={
             "workspace_id": profile["workspace_id"],
+            "profile_id": profile["id"],
             "title": topic_name,
             "body": generated_text,
             "language": profile["language"],
@@ -201,12 +202,29 @@ async def send_admin_message(bot: Bot, text: str, admins: list[int], reply_marku
         return False
     sent_any = False
     for admin_id in admins:
-        try:
-            await bot.send_message(admin_id, text, parse_mode="HTML", reply_markup=reply_markup)
-            sent_any = True
-        except Exception as exc:
-            logging.exception("Failed to send admin message to %s: %s", admin_id, exc)
+        for attempt in range(3):
+            try:
+                await bot.send_message(admin_id, text, parse_mode="HTML", reply_markup=reply_markup)
+                sent_any = True
+                break
+            except Exception:
+                logging.exception("Failed to send admin message to %s (attempt %s)", admin_id, attempt + 1)
+                if attempt < 2:
+                    await asyncio.sleep(1)
     return sent_any
+
+
+async def claim_notification(content_id: int) -> dict[str, Any] | None:
+    response = await backend_request("POST", f"/content/contents/{content_id}/notification-claim")
+    if response.status_code == 409:
+        return None
+    response.raise_for_status()
+    return response.json()
+
+
+async def complete_notification(content_id: int) -> None:
+    response = await backend_request("POST", f"/content/contents/{content_id}/notification-complete")
+    response.raise_for_status()
 
 
 def build_generation_prompt(profile: dict[str, Any], used_names: set[str]) -> str:
@@ -260,7 +278,6 @@ async def generate_and_send_profile(bot: Bot, ai_client: OpenAIClient, profile: 
 
         content = await create_content(profile, topic_name, generated_text)
         await transition_content(content["id"], "review")
-        await mark_profile_run(profile["id"])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -274,16 +291,49 @@ async def generate_and_send_profile(bot: Bot, ai_client: OpenAIClient, profile: 
             f"<b>Topic:</b> {escape(topic_name)}\n"
             f"<b>Language:</b> {escape(profile['language'])}\n\n{generated_text}"
         )
-        return await send_admin_message(bot, payload, admins, keyboard)
+        if await send_admin_message(bot, payload, admins, keyboard):
+            await complete_notification(content["id"])
+            return True
+        logging.error("Approval notification delivery failed for content %s; it remains retryable", content["id"])
+        return False
 
     await request_profile_regeneration(profile["id"])
     await send_admin_message(bot, f"⚠️ Не удалось подготовить валидный пост для профиля {profile['name']} после 3 попыток. Профиль оставлен в очереди на повтор.", admins)
     return False
 
 
+async def retry_pending_notifications(bot: Bot, admins: list[int]) -> None:
+    contents = await fetch_collection("/content/contents")
+    for item in contents:
+        if item.get("status") != "review" or item.get("approval_notification_sent_at") is not None or not item.get("profile_id"):
+            continue
+        claimed = await claim_notification(int(item["id"]))
+        if not claimed:
+            continue
+        profile = await fetch_profile(int(item["profile_id"]))
+        if not profile:
+            continue
+        body = prepare_telegram_content(str(item.get("body") or ""))
+        payload = (
+            f"<b>Profile:</b> {escape(str(profile['name']))}\n"
+            f"<b>Topic:</b> {escape(str(item.get('title') or 'Untitled'))}\n"
+            f"<b>Language:</b> {escape(str(item.get('language') or profile.get('language') or 'en'))}\n\n{body}"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Approve", callback_data=f"approve:{item['id']}:{profile['id']}"),
+                InlineKeyboardButton(text="Reject", callback_data=f"reject:{item['id']}"),
+            ],
+            [InlineKeyboardButton(text="Regenerate", callback_data=f"regenerate:{profile['id']}:{item['id']}")],
+        ])
+        if await send_admin_message(bot, payload, admins, keyboard):
+            await complete_notification(int(item["id"]))
+
+
 async def schedule_worker(bot: Bot, ai_client: OpenAIClient, admins: list[int]) -> None:
     while True:
         try:
+            await retry_pending_notifications(bot, admins)
             profiles = await fetch_ready_profiles()
             for profile in profiles:
                 await generate_and_send_profile(bot, ai_client, profile, admins)
