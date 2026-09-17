@@ -28,6 +28,7 @@ class Workspace(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     channels = relationship("Channel", back_populates="workspace", cascade="all, delete-orphan")
     contents = relationship("Content", back_populates="workspace", cascade="all, delete-orphan")
+    content_profiles = relationship("ContentProfile", back_populates="workspace", cascade="all, delete-orphan")
 
 
 class Channel(Base):
@@ -44,6 +45,34 @@ class Channel(Base):
     workspace = relationship("Workspace", back_populates="channels")
     publications = relationship("Publication", back_populates="channel")
     variants = relationship("ContentVariant", back_populates="channel", cascade="all, delete-orphan")
+    content_profiles = relationship("ContentProfile", back_populates="channel", cascade="all, delete-orphan")
+
+
+class ContentProfile(Base):
+    __tablename__ = "content_profiles"
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    channel_id = Column(Integer, ForeignKey("channels.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    language = Column(String, nullable=False, default="en")
+    topic_niche = Column(Text, nullable=True)
+    tone = Column(String, nullable=True)
+    content_format = Column(String, nullable=True)
+    rules = Column(Text, nullable=True)
+    timezone = Column(String, nullable=False, default="UTC")
+    schedule_type = Column(String, nullable=False, default="daily")
+    schedule_value = Column(String, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    last_run = Column(DateTime, nullable=True)
+    regeneration_requested = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("channel_id", "name", name="uq_content_profiles_channel_name"),
+        CheckConstraint("schedule_type IN ('interval', 'daily')", name="ck_content_profiles_schedule_type"),
+    )
+    workspace = relationship("Workspace", back_populates="content_profiles")
+    channel = relationship("Channel", back_populates="content_profiles")
 
 
 class Content(Base):
