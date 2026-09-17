@@ -57,3 +57,17 @@ def test_profile_regeneration_request_can_be_claimed_immediately():
     claim = client.post(f"/content/profiles/{profile['id']}/claim", headers=HEADERS)
     assert claim.status_code == 200
     assert claim.json()["regeneration_requested"] is False
+
+
+def test_manual_claim_does_not_consume_schedule():
+    profile = create_profile(schedule_value="99999")
+    claim = client.post(
+        f"/content/profiles/{profile['id']}/claim?force=true&record_run=false",
+        headers=HEADERS,
+    )
+    assert claim.status_code == 200
+    assert claim.json()["last_run"] is None
+
+    scheduled_claim = client.post(f"/content/profiles/{profile['id']}/claim", headers=HEADERS)
+    assert scheduled_claim.status_code == 200
+    assert scheduled_claim.json()["last_run"] is not None

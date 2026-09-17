@@ -200,13 +200,14 @@ def request_regeneration(profile_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/profiles/{profile_id}/claim", response_model=ContentProfileOut, dependencies=[Depends(require_service_token)])
-def claim_profile_run(profile_id: int, force: bool = False, db: Session = Depends(get_db)):
+def claim_profile_run(profile_id: int, force: bool = False, record_run: bool = True, db: Session = Depends(get_db)):
     """Atomically claim a due profile before doing slow AI work."""
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
     profile = db.query(ContentProfile).filter(ContentProfile.id == profile_id).with_for_update().first()
     if not profile or not profile.is_active or (not force and not is_ready(profile, now_utc)):
         raise HTTPException(409, "Content profile is not ready to run")
-    profile.last_run = now_utc.replace(tzinfo=None)
+    if record_run:
+        profile.last_run = now_utc.replace(tzinfo=None)
     profile.regeneration_requested = False
     profile.updated_at = datetime.utcnow()
     audit(db, profile.workspace_id, "content_profile", profile.id, "run_claimed", event_type="content_profile.run_claimed")

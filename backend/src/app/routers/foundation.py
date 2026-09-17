@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 import hmac
 import os
@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from src.app.audit import audit
 from src.app.db import get_db
 from src.app.domain.content_state_machine import transition
-from src.app.models import Channel, Content, ContentVersion, Publication, PublicationOperation, Workspace
+from src.app.models import Channel, Content, ContentProfile, ContentVersion, Publication, PublicationOperation, Workspace
 from src.app.observability import publication_event
 from src.app.services import publication_service
 
@@ -47,6 +47,7 @@ class ChannelOut(ChannelCreate):
 
 class ContentCreate(BaseModel):
     workspace_id: int
+    profile_id: Optional[int] = None
     title: Optional[str] = None
     body: str = Field(..., min_length=1)
     language: str = Field(..., min_length=2, max_length=10)
@@ -63,11 +64,14 @@ class ContentUpdate(BaseModel):
 class ContentOut(BaseModel):
     id: int
     workspace_id: int
+    profile_id: Optional[int]
     title: Optional[str]
     body: str
     language: str
     status: str
     created_by: Optional[int]
+    approval_notification_claimed_at: Optional[datetime] = None
+    approval_notification_sent_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -225,7 +229,13 @@ def list_channels(workspace_id: Optional[int] = None, db: Session = Depends(get_
 def create_content(payload: ContentCreate, db: Session = Depends(get_db)):
     if not db.query(Workspace).filter(Workspace.id == payload.workspace_id).first():
         raise HTTPException(404, "Workspace not found")
-    content = Content(workspace_id=payload.workspace_id, title=payload.title, language=payload.language.lower(), created_by=payload.created_by, status="draft")
+    if payload.profile_id is not None:
+        profile = db.query(ContentProfile).filter(ContentProfile.id == payload.profile_id).first()
+        if not profile:
+            raise HTTPException(404, "Content profile not found")
+        if profile.workspace_id != payload.workspace_id:
+            raise HTTPException(400, "Content profile must belong to the workspace")
+    content = Content(workspace_id=payload.workspace_id, profile_id=payload.profile_id, title=payload.title, language=payload.language.lower(), created_by=payload.created_by, status="draft")
     db.add(content)
     db.flush()
     db.add(ContentVersion(content_id=content.id, version=1, body=payload.body, source=payload.source, created_by=payload.created_by))
@@ -270,6 +280,32 @@ def list_contents(workspace_id: Optional[int] = None, db: Session = Depends(get_
     if workspace_id is not None:
         query = query.filter(Content.workspace_id == workspace_id)
     return query.order_by(Content.created_at.asc(), Content.id.asc()).all()
+
+
+@router.post("/contents/{content_id}/notification-claim", response_model=ContentOut, dependencies=[Depends(require_service_token)])
+def claim_content_notification(content_id: int, db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    content = db.query(Content).filter(Content.id == content_id).with_for_update().first()
+    if not content or content.status != "review" or content.approval_notification_sent_at is not None:
+        raise HTTPException(409, "Content notification is not available")
+    if content.approval_notification_claimed_at and content.approval_notification_claimed_at > now - timedelta(minutes=5):
+        raise HTTPException(409, "Content notification is already claimed")
+    content.approval_notification_claimed_at = now
+    db.commit()
+    db.refresh(content)
+    return content
+
+
+@router.post("/contents/{content_id}/notification-complete", response_model=ContentOut, dependencies=[Depends(require_service_token)])
+def complete_content_notification(content_id: int, db: Session = Depends(get_db)):
+    content = db.query(Content).filter(Content.id == content_id).first()
+    if not content or content.status != "review":
+        raise HTTPException(409, "Content notification is not available")
+    content.approval_notification_sent_at = datetime.utcnow()
+    content.approval_notification_claimed_at = None
+    db.commit()
+    db.refresh(content)
+    return content
 
 
 @router.get("/contents/{content_id}/versions", response_model=List[ContentVersionOut], dependencies=[Depends(require_service_token)])

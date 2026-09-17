@@ -39,3 +39,27 @@ Approve, reject, or regenerate directly from the Telegram message.
 Back up PostgreSQL before upgrades. Database schema changes are managed only by Alembic; application startup does not call `create_all()`.
 
 For an upgrade: back up the database, pull the new version, run `docker compose up -d --build`, verify `/health/ready` and `docker compose ps`, then inspect Telegram `/status`.
+
+
+## Public HTTPS / Telegram WebApp
+
+The frontend container listens on HTTPS internally on port 8443 and is bound to
+`127.0.0.1:3000` by the default Compose file. For a real Telegram WebApp,
+place a reverse proxy in front of it and expose a valid public TLS certificate.
+
+Set both `WEBAPP_URL` and `FRONTEND_PUBLIC_URL` to the same public HTTPS origin,
+for example `https://content.example.com`. The reverse proxy should forward that
+origin to `https://127.0.0.1:3000`.
+
+The frontend currently mounts `/var/run/docker.sock` because the self-hosted UI
+uses Docker lifecycle operations. Treat the frontend host/container as privileged:
+a compromise of the frontend process can potentially control Docker on the host.
+Keep the management interface behind trusted network controls and do not expose
+the Docker socket to unrelated containers.
+
+## Approval notification recovery
+
+Approval notifications are persisted as part of the content lifecycle. If the
+Telegram send fails or the Telegram service restarts, review items remain pending
+and the scheduler retries their notification. A notification claim expires after
+five minutes so an interrupted worker can recover it.

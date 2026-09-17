@@ -48,6 +48,9 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
         "post_drafts",
     })
 
+    content_columns = {column["name"] for column in inspector.get_columns("contents")}
+    assert {"profile_id", "approval_notification_claimed_at", "approval_notification_sent_at"} <= content_columns
+
     publication_columns = {column["name"] for column in inspector.get_columns("publications")}
     assert {
         "content_version_id",
@@ -128,7 +131,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
 
     with engine.connect() as connection:
         version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-    assert version == "0005_content_profiles"
+    assert version == "0006_approval_notifications"
 
 
 def test_alembic_can_downgrade_fresh_schema_to_base(tmp_path):
