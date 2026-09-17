@@ -41,7 +41,7 @@ USER appuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('https://localhost:443')" || exit 1
+    CMD python -c "import socket; socket.create_connection(('localhost', 8443), 5)" || exit 1
 
 # Run entrypoint script
 ENTRYPOINT ["/app/entrypoint.sh"]
