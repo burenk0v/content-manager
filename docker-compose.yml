@@ -43,6 +43,9 @@ services:
       BACKEND_API_URL: http://backend:8000
       FRONTEND_HOST: ${FRONTEND_HOST:-127.0.0.1}
       FRONTEND_SECRET_KEY: ${FRONTEND_SECRET_KEY:?FRONTEND_SECRET_KEY is required}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
