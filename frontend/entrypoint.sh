@@ -4,13 +4,26 @@ set -e
 # Run migrations
 python src/manage.py migrate
 
-# Create admin user if it doesn't exist
+# Optionally bootstrap the first operator. Never create a hard-coded default account.
+if [ -n "${ADMIN_USERNAME:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ] && [ -n "${ADMIN_EMAIL:-}" ]; then
 python src/manage.py shell <<EOF
+import os
 from django.contrib.auth import get_user_model
 User = get_user_model()
-if not User.objects.filter(username='admin').exists():
-    User.objects.create_superuser('admin', 'admin@myproject.com', 'admin')
+username = os.environ["ADMIN_USERNAME"]
+password = os.environ["ADMIN_PASSWORD"]
+email = os.environ["ADMIN_EMAIL"]
+user, created = User.objects.get_or_create(username=username, defaults={"email": email, "is_staff": True, "is_superuser": True})
+if created:
+    user.set_password(password)
+    user.save()
+elif not user.is_superuser:
+    user.is_staff = True
+    user.is_superuser = True
+    user.set_password(password)
+    user.save()
 EOF
+fi
 
 # Generate self-signed certificate if needed
 mkdir -p /certs
