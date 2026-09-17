@@ -173,7 +173,7 @@ async def main() -> None:
             await message.answer("Профиль не найден или выключен.")
             return
         await message.answer(f"Запускаю генерацию для <b>{escape(str(profile.get('name', profile_id)))}</b>…", parse_mode="HTML")
-        if not await generate_and_send_profile(bot, ai_client, profile, ADMINS):
+        if not await generate_and_send_profile(bot, ai_client, profile, ADMINS, force=True):
             await message.answer("Генерация не удалась. Проверьте настройки профиля и AI.")
 
     @dp.message()

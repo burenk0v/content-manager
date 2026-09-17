@@ -79,9 +79,16 @@ This system provides:
 
 #### Database (PostgreSQL)
 
-- **Port**: 5432
 - **Health check**: Validates readiness every 10 seconds
 - **Persistence**: Data stored in Docker volume `postgres_data`
+
+## Self-hosted v1
+
+The supported product flow is `Content Profile → autonomous AI generation → Telegram approval → publication worker`. Web is the configuration surface; Telegram is the approval and operations console.
+
+For a fresh self-hosted deployment, copy `.env.example` to `.env`, replace all `CHANGE_ME_*` values, and run `docker compose up -d --build`. The backend applies Alembic migrations on startup and the frontend applies Django migrations before serving the UI. See `docs/SELF_HOSTING.md` for the operational runbook.
+
+The frontend no longer creates a hard-coded default admin account. Set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_EMAIL` in `.env` for the initial operator account.
 
 ## Environment Variables
 
@@ -93,14 +100,14 @@ Required configuration:
 | `DB_PASSWORD` | `postgres` | PostgreSQL password |
 | `DB_NAME` | `content_manager` | Database name |
 | `SERVICE_ACCOUNT_TOKEN` | — | Backend authentication token |
-| `SECRET_KEY` | — | Django/backend secret key |
+| `FRONTEND_SECRET_KEY` | — | Django frontend secret key |
 | `BOT_TOKEN` | — | Used as initial value for per-user UI Telegram settings |
 | `ADMINS` | — | Used as initial value for per-user UI Telegram settings |
 | `OPENAI_API_KEY` | — | OpenAI API key for backend AI generation and transformation |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model for backend AI generation and transformation |
 | `AI_GENERATION_PROVIDER` | `openai` | Backend generation provider |
 | `AI_TRANSFORMATION_PROVIDER` | `AI_GENERATION_PROVIDER` | Provider for channel-specific transformation |
-| `WEBAPP_URL` | `https://example.com` | Used as initial value for per-user UI Telegram settings |
+| `WEBAPP_URL` | — | Public HTTPS URL opened from Telegram WebApp |
 | `SCHEDULE_CHECK_INTERVAL_SECONDS` | `10` | Used as initial value for per-user UI Telegram settings |
 | `PUBLICATION_WORKER_ID` | `telegram:<hostname>` | Stable worker identity used for publication leases |
 | `PUBLICATION_POLL_INTERVAL_SECONDS` | `5` | Publication queue polling interval |

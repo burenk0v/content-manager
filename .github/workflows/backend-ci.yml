@@ -9,6 +9,20 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: content_manager
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d content_manager"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: backend
@@ -19,8 +33,12 @@ jobs:
           python-version: "3.13"
       - run: pip install -r src/requirements.txt
       - run: python scripts/check_architecture.py
+      - run: python -m compileall -q src
+      - run: docker compose -f ../docker-compose.yml --env-file ../.env.example config
       - run: PYTHONPATH=. pytest -q
       - run: alembic upgrade head
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/content_manager
 
   telegram:
     runs-on: ubuntu-latest

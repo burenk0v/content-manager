@@ -11,16 +11,19 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv("FRONTEND_SECRET_KEY", "django-insecure-345678901234567890123456789012345678901234567890")
+SECRET_KEY = os.getenv("FRONTEND_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("FRONTEND_SECRET_KEY is required")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() == "true"
 
 ALLOWED_HOSTS = [
     '0.0.0.0',
     'localhost',
     'frontend',
     os.getenv("FRONTEND_HOST", "127.0.0.1"),
+    socket.gethostname(),
 ]
 CSRF_TRUSTED_ORIGINS = [
     'https://localhost:8443',
