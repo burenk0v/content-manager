@@ -54,7 +54,7 @@ async def request_profile_regeneration(profile_id: int) -> dict[str, Any]:
 async def claim_profile_run(profile_id: int, *, force: bool = False) -> dict[str, Any]:
     path = f"/content/profiles/{profile_id}/claim"
     if force:
-        path += "?force=true"
+        path += "?force=true&record_run=false"
     response = await backend_request("POST", path)
     if response.status_code == 409:
         return {}
