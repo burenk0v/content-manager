@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from src.app.ai_generation import GenerationError, get_generation_provider
 from src.app.audit import audit
 from src.app.domain.content_state_machine import InvalidContentTransition, transition
-from src.app.models import Content, ContentVersion, GenerationRun
+from src.app.models import Content, ContentProfile, ContentVersion, GenerationRun
 
 
 class GenerationNotFound(Exception):
@@ -53,8 +53,6 @@ def generate_content(
         provider_name = provider.name
         run.provider = provider_name
         generated = provider.generate(prompt=prompt, system_message=system_message, model=model)
-        if transform_generated is not None:
-            generated = transform_generated(generated)
         if transform_generated is not None:
             generated = transform_generated(generated)
     except (GenerationError, GenerationProviderFailure) as exc:
