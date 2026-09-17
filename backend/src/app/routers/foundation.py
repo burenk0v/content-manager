@@ -70,8 +70,8 @@ class ContentOut(BaseModel):
     language: str
     status: str
     created_by: Optional[int]
-    approval_notification_claimed_at: Optional[datetime]
-    approval_notification_sent_at: Optional[datetime]
+    approval_notification_claimed_at: Optional[datetime] = None
+    approval_notification_sent_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
