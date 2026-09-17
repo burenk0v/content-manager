@@ -1,7 +1,10 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.app.models import Base, Channel, ContentProfile, Workspace
+from src.app.routers.profiles import is_ready
 
 
 def test_content_profile_persists_generation_and_schedule_configuration():
@@ -68,3 +71,43 @@ def test_content_profile_name_is_unique_per_channel():
             assert False, "duplicate profile name should fail"
         except Exception:
             db.rollback()
+
+
+def test_interval_profile_becomes_ready_after_interval():
+    profile = ContentProfile(
+        is_active=True,
+        regeneration_requested=False,
+        schedule_type="interval",
+        schedule_value="60",
+        last_run=datetime(2026, 9, 17, 8, 0),
+    )
+    now = datetime(2026, 9, 17, 9, 0, tzinfo=timezone.utc)
+    assert is_ready(profile, now) is True
+
+
+def test_daily_profile_runs_once_per_local_day():
+    profile = ContentProfile(
+        is_active=True,
+        regeneration_requested=False,
+        schedule_type="daily",
+        schedule_value="09:30",
+        timezone="America/New_York",
+        last_run=datetime(2026, 9, 17, 13, 0),
+    )
+    same_day = datetime(2026, 9, 17, 14, 0, tzinfo=timezone.utc)
+    next_day = datetime(2026, 9, 18, 14, 0, tzinfo=timezone.utc)
+    assert is_ready(profile, same_day) is False
+    assert is_ready(profile, next_day) is True
+
+
+def test_regeneration_request_bypasses_schedule():
+    profile = ContentProfile(
+        is_active=True,
+        regeneration_requested=True,
+        schedule_type="daily",
+        schedule_value="23:59",
+        timezone="UTC",
+        last_run=datetime(2026, 9, 17, 0, 0),
+    )
+    now = datetime(2026, 9, 17, 1, 0, tzinfo=timezone.utc)
+    assert is_ready(profile, now) is True
