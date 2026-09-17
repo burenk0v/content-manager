@@ -67,6 +67,8 @@ class ContentProfile(Base):
     regeneration_requested = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    approval_notification_claimed_at = Column(DateTime, nullable=True, index=True)
+    approval_notification_sent_at = Column(DateTime, nullable=True, index=True)
     __table_args__ = (
         UniqueConstraint("channel_id", "name", name="uq_content_profiles_channel_name"),
         CheckConstraint("schedule_type IN ('interval', 'daily')", name="ck_content_profiles_schedule_type"),
@@ -79,6 +81,7 @@ class Content(Base):
     __tablename__ = "contents"
     id = Column(Integer, primary_key=True, index=True)
     workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    profile_id = Column(Integer, ForeignKey("content_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String, nullable=True)
     language = Column(String, nullable=False)
     status = Column(String, nullable=False, default="draft", index=True)
@@ -89,6 +92,7 @@ class Content(Base):
         CheckConstraint("status IN ('draft', 'review', 'approved', 'scheduled', 'publishing', 'published', 'failed', 'archived')", name="ck_contents_status_valid"),
     )
     workspace = relationship("Workspace", back_populates="contents")
+    profile = relationship("ContentProfile")
     author = relationship("User")
     versions = relationship("ContentVersion", back_populates="content", cascade="all, delete-orphan", order_by="ContentVersion.version")
     publications = relationship("Publication", back_populates="content", cascade="all, delete-orphan")
