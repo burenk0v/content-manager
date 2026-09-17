@@ -9,7 +9,6 @@ import httpx
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from openai_client import OpenAIClient
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
@@ -248,58 +247,53 @@ def build_generation_prompt(profile: dict[str, Any], used_names: set[str]) -> st
     )
 
 
-async def generate_and_send_profile(bot: Bot, ai_client: OpenAIClient, profile: dict[str, Any], admins: list[int], *, force: bool = False) -> bool:
+async def generate_and_send_profile(bot: Bot, profile: dict[str, Any], admins: list[int], *, force: bool = False) -> bool:
     try:
-        profile = await claim_profile_run(profile["id"], force=force)
+        claimed = await claim_profile_run(profile["id"], force=force)
     except Exception:
         logging.exception("Failed to claim profile %s", profile["id"])
         return False
-    if not profile:
+    if not claimed:
         return False
-    contents = await fetch_contents(profile["workspace_id"])
-    used_names = {str(item.get("title") or "").strip().lower() for item in contents if item.get("title")}
 
-    for attempt in range(3):
-        generated = ai_client.chat(
-            build_generation_prompt(profile, used_names),
-            system_message="You are an autonomous content editor. Produce complete publication-ready content.",
+    try:
+        response = await backend_request(
+            "POST",
+            f"/content/profiles/{profile['id']}/generate",
+            json={},
         )
-        parsed = parse_generation_output(generated)
-        if not parsed:
-            logging.warning("Profile %s generation attempt %s was unparsable", profile["id"], attempt + 1)
-            continue
-        topic_name, generated_text = parsed
-        if not validate_generated_content(topic_name, generated_text, used_names):
-            logging.warning("Profile %s generation attempt %s failed validation", profile["id"], attempt + 1)
-            continue
-        generated_text = prepare_telegram_content(generated_text)
-        if not validate_generated_content(topic_name, generated_text, used_names):
-            continue
-
-        content = await create_content(profile, topic_name, generated_text)
-        await transition_content(content["id"], "review")
+        if response.status_code == 409:
+            logging.info("Profile %s generation was rejected by backend", profile["id"])
+            return False
+        response.raise_for_status()
+        run = response.json()
+        content = await fetch_collection(f"/content/contents?workspace_id={profile['workspace_id']}")
+        item = next((row for row in content if row.get("id") == run.get("content_id")), None)
+        if not item:
+            logging.error("Generation run %s created without content %s", run.get("id"), run.get("content_id"))
+            return False
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="Approve", callback_data=f"approve:{content['id']}:{profile['id']}"),
-                InlineKeyboardButton(text="Reject", callback_data=f"reject:{content['id']}"),
+                InlineKeyboardButton(text="Approve", callback_data=f"approve:{item['id']}:{profile['id']}"),
+                InlineKeyboardButton(text="Reject", callback_data=f"reject:{item['id']}"),
             ],
-            [InlineKeyboardButton(text="Regenerate", callback_data=f"regenerate:{profile['id']}:{content['id']}")],
+            [InlineKeyboardButton(text="Regenerate", callback_data=f"regenerate:{profile['id']}:{item['id']}")],
         ])
+        body = prepare_telegram_content(str(item.get("body") or ""))
         payload = (
             f"<b>Profile:</b> {escape(str(profile['name']))}\n"
-            f"<b>Topic:</b> {escape(topic_name)}\n"
-            f"<b>Language:</b> {escape(profile['language'])}\n\n{generated_text}"
+            f"<b>Topic:</b> {escape(str(item.get('title') or 'Untitled'))}\n"
+            f"<b>Language:</b> {escape(str(item.get('language') or profile.get('language') or 'en'))}\n\n{body}"
         )
         if await send_admin_message(bot, payload, admins, keyboard):
-            await complete_notification(content["id"])
+            await complete_notification(int(item["id"]))
             return True
-        logging.error("Approval notification delivery failed for content %s; it remains retryable", content["id"])
+        logging.error("Approval notification delivery failed for content %s; it remains retryable", item["id"])
         return False
-
-    await request_profile_regeneration(profile["id"])
-    await send_admin_message(bot, f"⚠️ Не удалось подготовить валидный пост для профиля {profile['name']} после 3 попыток. Профиль оставлен в очереди на повтор.", admins)
-    return False
+    except Exception:
+        logging.exception("Autonomous generation failed for profile %s", profile["id"])
+        return False
 
 
 async def retry_pending_notifications(bot: Bot, admins: list[int]) -> None:
@@ -330,13 +324,13 @@ async def retry_pending_notifications(bot: Bot, admins: list[int]) -> None:
             await complete_notification(int(item["id"]))
 
 
-async def schedule_worker(bot: Bot, ai_client: OpenAIClient, admins: list[int]) -> None:
+async def schedule_worker(bot: Bot, admins: list[int]) -> None:
     while True:
         try:
             await retry_pending_notifications(bot, admins)
             profiles = await fetch_ready_profiles()
             for profile in profiles:
-                await generate_and_send_profile(bot, ai_client, profile, admins)
+                await generate_and_send_profile(bot, profile, admins)
         except Exception:
             logging.exception("Error while processing autonomous content profiles")
         await asyncio.sleep(SCHEDULE_CHECK_INTERVAL_SECONDS)
