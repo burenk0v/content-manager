@@ -21,7 +21,6 @@ def get_schedule_check_interval_seconds() -> int:
     if raw_seconds is not None:
         return int(raw_seconds)
 
-    # Backward-compatible fallback for previous minute-based configuration.
     raw_minutes = os.getenv("SCHEDULE_CHECK_INTERVAL_MINUTES")
     if raw_minutes is not None:
         return int(raw_minutes) * 60
@@ -146,6 +145,23 @@ def parse_generation_output(text: str) -> tuple[str, str] | None:
     return None
 
 
+def validate_generated_content(topic_name: str, generated_text: str, used_names: set[str]) -> bool:
+    """Reject obviously unusable AI output before it reaches the approval queue."""
+    if not topic_name or not generated_text:
+        return False
+    if topic_name.lower() in used_names:
+        return False
+    if len(generated_text.strip()) < 20:
+        return False
+    if len(generated_text) > 12000:
+        return False
+    if re.search(r"<\/?(?:script|style|iframe)\b", generated_text, re.I):
+        return False
+    if re.search(r"\[(?:insert|add|write|replace)|\{\{.*?\}\}", generated_text, re.I):
+        return False
+    return True
+
+
 def looks_like_html(text: str) -> bool:
     if not text:
         return False
@@ -209,7 +225,7 @@ def prepare_telegram_content(text: str) -> str:
     for line in lines:
         if line.strip().startswith("```"):
             if in_code_block:
-                result.append(f"<pre><code>{escape('\n'.join(code_lines))}</code></pre>")
+                result.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
                 code_lines = []
                 in_code_block = False
             else:
@@ -233,7 +249,7 @@ def prepare_telegram_content(text: str) -> str:
         result.append(rendered)
 
     if in_code_block:
-        result.append(f"<pre><code>{escape('\n'.join(code_lines))}</code></pre>")
+        result.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
 
     return "\n".join(result)
 
@@ -255,32 +271,30 @@ async def send_admin_message(bot: Bot, text: str, admins: list[int], reply_marku
 
 
 def build_generation_prompt(schedule: dict[str, Any], used_names: set[str]) -> str:
-    existing_topics = ', '.join(sorted(used_names)) if used_names else 'none'
+    existing_topics = ", ".join(sorted(used_names)) if used_names else "none"
     custom_prompt = schedule.get("prompt_text")
+    profile = [
+        f"Channel: {schedule.get('chat_name') or schedule.get('name') or 'Telegram channel'}",
+        f"Language: {schedule.get('language') or 'en'}",
+    ]
     if custom_prompt:
-        return (
-            f"{custom_prompt}\n\n"
-            f"Language: {schedule['language']}\n"
-            "Return the result in this exact format:\n"
-            "TOPIC: <topic>\n"
-            "POST: <message>\n"
-            f"Existing topics: {existing_topics}"
-        )
+        profile.append(f"Editorial brief: {custom_prompt}")
 
     return (
-        f"Generate a new Telegram post in {schedule['language']}. "
-        "First provide a unique topic and then the channel message. "
-        "Do not reuse existing topics. "
-        "Output in this exact format:\n\n"
-        "TOPIC: <topic>\n"
-        "POST: <message>\n\n"
-        "Existing topics: " + existing_topics
+        "You are an autonomous content editor for a Telegram channel. "
+        "You own topic ideation and must choose a useful, timely topic yourself. "
+        "Do not ask the operator for a topic. Do not reuse an existing topic. "
+        "Write a complete publication-ready post, not an outline or instructions. "
+        "Use HTML only when formatting improves readability; never output scripts, styles, or placeholders. "
+        "Return exactly two fields:\n"
+        "TOPIC: <short topic name>\n"
+        "POST: <ready-to-publish message>\n\n"
+        "Content profile:\n- " + "\n- ".join(profile) + "\n\n"
+        "Previously used topics (avoid these): " + existing_topics
     )
 
 
 async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: dict[str, Any], admins: list[int]) -> bool:
-    # Re-read schedule state to avoid processing a schedule that was disabled
-    # right after the ready list was fetched.
     current_schedule = await fetch_schedule(schedule["id"])
     if not current_schedule:
         logging.info("Schedule %s was removed before processing", schedule.get("id"))
@@ -291,25 +305,24 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
 
     schedule = current_schedule
     existing_topics = await fetch_topics()
-    used_names = {topic.get("name", "").strip().lower() for topic in existing_topics}
+    used_names = {topic.get("name", "").strip().lower() for topic in existing_topics if topic.get("name")}
     system_message = schedule.get("assistant_template_text") or schedule.get("assistant_message") or (
-        "You are generating a Telegram post. Return only ready-to-send content with HTML formatting."
+        "You are an autonomous Telegram content editor. Generate publication-ready content and follow the requested output format."
     )
 
     for attempt in range(3):
         prompt = build_generation_prompt(schedule, used_names)
-
         generated = ai_client.chat(prompt, system_message=system_message)
         parsed = parse_generation_output(generated)
         if not parsed:
+            logging.warning("AI generation attempt %s returned an unparsable response", attempt + 1)
             continue
 
         topic_name, generated_text = parsed
-        if not topic_name or topic_name.lower() in used_names:
+        if not validate_generated_content(topic_name, generated_text, used_names):
+            logging.warning("AI generation attempt %s failed content validation", attempt + 1)
             continue
 
-        # Check once more before writing/sending because generation can take time,
-        # and the schedule may be disabled in the meantime.
         refreshed_schedule = await fetch_schedule(schedule["id"])
         if not refreshed_schedule or not refreshed_schedule.get("is_active", False):
             logging.info("Schedule %s became inactive during generation", schedule.get("id"))
@@ -317,11 +330,13 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
 
         schedule = refreshed_schedule
         generated_text = prepare_telegram_content(generated_text)
+        if not validate_generated_content(topic_name, generated_text, used_names):
+            continue
 
         draft = await create_draft(
-            schedule_id=schedule['id'],
+            schedule_id=schedule["id"],
             topic_name=topic_name,
-            language=schedule['language'],
+            language=schedule["language"],
             generated_text=generated_text,
         )
 
@@ -344,13 +359,17 @@ async def generate_and_send_draft(bot: Bot, ai_client: OpenAIClient, schedule: d
         )
         sent = await send_admin_message(bot, payload_text, admins, keyboard)
         if sent:
-            await update_schedule_last_run(schedule['id'], datetime.utcnow())
+            await update_schedule_last_run(schedule["id"], datetime.utcnow())
             return True
-        else:
-            logging.warning("Draft created for schedule %s but admin message failed", schedule['name'])
+
+        logging.warning("Draft created for schedule %s but admin message failed", schedule["name"])
         return False
 
-    await send_admin_message(bot, f"⚠️ Не удалось сгенерировать уникальный пост для расписания {schedule['name']}. Попробуйте проверить темы или настройки ассистента.", admins)
+    await send_admin_message(
+        bot,
+        f"⚠️ Не удалось подготовить валидный пост для расписания {schedule['name']} после 3 попыток. Проверьте настройки контент-профиля.",
+        admins,
+    )
     return False
 
 
