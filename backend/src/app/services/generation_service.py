@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
 
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,44 @@ class GenerationProviderFailure(Exception):
     pass
 
 
+DEFAULT_GENERATION_LEASE_TIMEOUT_SECONDS = 900
+MIN_GENERATION_LEASE_TIMEOUT_SECONDS = 60
+MAX_GENERATION_LEASE_TIMEOUT_SECONDS = 86400
+
+
+def generation_lease_timeout_seconds() -> int:
+    raw = os.environ.get("GENERATION_LEASE_TIMEOUT_SECONDS", str(DEFAULT_GENERATION_LEASE_TIMEOUT_SECONDS))
+    try:
+        value = int(raw)
+    except ValueError:
+        value = DEFAULT_GENERATION_LEASE_TIMEOUT_SECONDS
+    return max(MIN_GENERATION_LEASE_TIMEOUT_SECONDS, min(value, MAX_GENERATION_LEASE_TIMEOUT_SECONDS))
+
+
+def recover_stale_generations(db: Session) -> list[GenerationRun]:
+    now = datetime.utcnow()
+    cutoff = now - timedelta(seconds=generation_lease_timeout_seconds())
+    runs = (db.query(GenerationRun)
+        .filter(GenerationRun.status == "running", GenerationRun.created_at < cutoff)
+        .order_by(GenerationRun.id.asc()).all())
+    recovered = []
+    for run in runs:
+        run.status = "failed"
+        run.error_message = "Recovered stale generation run after worker restart or timeout"
+        run.completed_at = now
+        run.lease_heartbeat_at = None
+        profile = run.content.profile
+        if profile is not None:
+            profile.regeneration_requested = True
+            profile.updated_at = now
+        audit(db, run.content.workspace_id, "generation_run", run.id, "recovered",
+              event_type="content.generation_recovered", metadata={"error_message": run.error_message})
+        recovered.append(run)
+    if recovered:
+        db.commit()
+    return recovered
+
+
 def generate_content(
     db: Session,
     content_id: int,
@@ -37,6 +76,22 @@ def generate_content(
     if content.status in {"published", "archived"}:
         raise GenerationConflict("Content cannot be regenerated in its current state")
 
+    now = datetime.utcnow()
+    active = (db.query(GenerationRun)
+        .filter(GenerationRun.content_id == content.id, GenerationRun.status == "running")
+        .order_by(GenerationRun.id.desc()).first())
+    if active is not None:
+        cutoff = now - timedelta(seconds=generation_lease_timeout_seconds())
+        if active.created_at >= cutoff:
+            raise GenerationConflict("Content already has a generation run in progress")
+        active.status = "failed"
+        active.error_message = "Recovered stale generation run before starting a new run"
+        active.completed_at = now
+        active.lease_heartbeat_at = None
+        audit(db, content.workspace_id, "generation_run", active.id, "recovered",
+              event_type="content.generation_recovered", metadata={"error_message": active.error_message})
+        db.flush()
+
     provider_name = "configured"
     run = GenerationRun(
         content_id=content.id,
@@ -44,12 +99,14 @@ def generate_content(
         model=model,
         status="running",
         prompt=prompt,
+        lease_heartbeat_at=now,
     )
     db.add(run)
     db.flush()
 
     try:
         provider = get_generation_provider()
+        run.lease_heartbeat_at = datetime.utcnow()
         provider_name = provider.name
         run.provider = provider_name
         generated = provider.generate(prompt=prompt, system_message=system_message, model=model)
@@ -92,6 +149,7 @@ def generate_content(
     run.content_version_id = version.id
     run.status = "succeeded"
     run.completed_at = datetime.utcnow()
+    run.lease_heartbeat_at = None
     audit(
         db,
         content.workspace_id,
