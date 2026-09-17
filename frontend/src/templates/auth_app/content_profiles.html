@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Content Profiles</title>
+    <style>
+        body { font-family: sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+        input, select, textarea { width: 100%; box-sizing: border-box; padding: 9px; margin: 5px 0 14px; }
+        textarea { min-height: 90px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        button, .link { display: inline-block; padding: 9px 14px; border: 0; border-radius: 5px; cursor: pointer; text-decoration: none; margin-right: 6px; }
+        .muted { color: #666; }
+        @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <p><a href="{% url 'auth_app:dashboard' %}">← Dashboard</a></p>
+    <h1>Content Profiles</h1>
+    <p class="muted">Configure autonomous content generation once. AI chooses topics; Telegram is used for approval.</p>
+
+    {% if messages %}
+        {% for message in messages %}<p>{{ message }}</p>{% endfor %}
+    {% endif %}
+
+    <div class="card">
+        <h2>{% if edit_profile %}Edit profile{% else %}Create profile{% endif %}</h2>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="{% if edit_profile %}update{% else %}create{% endif %}">
+            {% if edit_profile %}<input type="hidden" name="profile_id" value="{{ edit_profile.id }}">{% endif %}
+            <div class="grid">
+                <div>
+                    <label>Workspace</label>
+                    <select name="workspace_id" required onchange="this.form.submit()">
+                        <option value="">Select workspace</option>
+                        {% for workspace in workspaces %}
+                            <option value="{{ workspace.id }}" {% if edit_profile and edit_profile.workspace_id == workspace.id or request.POST.workspace_id == workspace.id|stringformat:'s' or request.GET.workspace_id == workspace.id|stringformat:'s' %}selected{% endif %}>{{ workspace.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>Channel</label>
+                    <select name="channel_id" required>
+                        <option value="">Select channel</option>
+                        {% for channel in channels %}
+                            <option value="{{ channel.id }}" {% if edit_profile and edit_profile.channel_id == channel.id %}selected{% endif %}>{{ channel.name|default:channel.external_id }} ({{ channel.platform }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <label>Profile name</label>
+            <input name="name" value="{{ edit_profile.name|default:'' }}" required maxlength="200" placeholder="e.g. Tech Telegram">
+            <div class="grid">
+                <div>
+                    <label>Language</label>
+                    <select name="language">{% for value,label in language_options %}<option value="{{ value }}" {% if edit_profile.language == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+                </div>
+                <div>
+                    <label>Timezone</label>
+                    <select name="timezone">{% for value,label in timezone_options %}<option value="{{ value }}" {% if edit_profile.timezone == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+                </div>
+            </div>
+            <label>Topic / niche</label>
+            <input name="topic_niche" value="{{ edit_profile.topic_niche|default:'' }}" placeholder="AI, software engineering, startups">
+            <div class="grid">
+                <div><label>Tone / style</label><input name="tone" value="{{ edit_profile.tone|default:'' }}" placeholder="Expert, concise, practical"></div>
+                <div><label>Content format</label><input name="content_format" value="{{ edit_profile.content_format|default:'' }}" placeholder="Short posts with bullets"></div>
+            </div>
+            <label>Editorial rules</label>
+            <textarea name="rules" placeholder="Facts first. No clickbait. No placeholders.">{{ edit_profile.rules|default:'' }}</textarea>
+            <div class="grid">
+                <div>
+                    <label>Frequency</label>
+                    <select name="schedule_type"><option value="daily" {% if edit_profile.schedule_type == 'daily' %}selected{% endif %}>Daily at time</option><option value="interval" {% if edit_profile.schedule_type == 'interval' %}selected{% endif %}>Every N minutes</option></select>
+                </div>
+                <div><label>Schedule value</label><input name="schedule_value" value="{{ edit_profile.schedule_value|default:'09:00' }}" required placeholder="09:00 or 360"></div>
+            </div>
+            <label><input type="checkbox" name="is_active" {% if not edit_profile or edit_profile.is_active %}checked{% endif %}> Active — let the AI run autonomously</label>
+            <br><br><button type="submit">Save profile</button>
+            {% if edit_profile %}<a class="link" href="{% url 'auth_app:content_profiles' %}">Cancel</a>{% endif %}
+        </form>
+    </div>
+
+    <h2>Configured profiles</h2>
+    {% for profile in profiles %}
+        <div class="card">
+            <h3>{{ profile.name }}</h3>
+            <p>{{ profile.channel_name|default:profile.channel_external_id }} · {{ profile.language }} · {{ profile.schedule_type }} {{ profile.schedule_value }} · {% if profile.is_active %}active{% else %}paused{% endif %}</p>
+            {% if profile.topic_niche %}<p><strong>Niche:</strong> {{ profile.topic_niche }}</p>{% endif %}
+            {% if profile.tone %}<p><strong>Tone:</strong> {{ profile.tone }}</p>{% endif %}
+            <a class="link" href="{% url 'auth_app:content_profiles' %}?edit={{ profile.id }}&workspace_id={{ profile.workspace_id }}">Edit</a>
+            <form method="post" style="display:inline">{% csrf_token %}<input type="hidden" name="action" value="regenerate"><input type="hidden" name="profile_id" value="{{ profile.id }}"><button type="submit">Regenerate now</button></form>
+            <form method="post" style="display:inline">{% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="profile_id" value="{{ profile.id }}"><button type="submit">Delete</button></form>
+        </div>
+    {% empty %}
+        <p class="muted">No content profiles yet.</p>
+    {% endfor %}
+</body>
+</html>
