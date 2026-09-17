@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import content_profiles
 
 app_name = 'auth_app'
 
@@ -8,6 +9,7 @@ urlpatterns = [
     path('dashboard/', views.dashboard_view, name='dashboard'),
     path('telegram-settings/', views.telegram_settings_view, name='telegram_settings'),
     path('theme/', views.set_theme_view, name='set_theme'),
+    path('content-profiles/', content_profiles.content_profiles_view, name='content_profiles'),
     path('topics/', views.topics_view, name='topics'),
     path('prompts/', views.prompts_view, name='prompts'),
     path('assistant-messages/', views.assistant_messages_view, name='assistant_messages'),
