@@ -14,6 +14,7 @@ from src.app.services.generation_service import (
     GenerationNotFound,
     GenerationProviderFailure,
     generate_content as generate_content_service,
+    generate_profile_content as generate_profile_content_service,
     list_generations as list_generations_service,
 )
 
@@ -79,3 +80,31 @@ def list_generations(content_id: int, db: Session = Depends(get_db)):
         return list_generations_service(db, content_id)
     except GenerationNotFound as exc:
         raise HTTPException(404, "Content not found") from exc
+
+
+@router.post(
+    "/profiles/{profile_id}/generate",
+    response_model=GenerationRunOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_service_token)],
+)
+def generate_profile(profile_id: int, payload: GenerateContent | None = None, db: Session = Depends(get_db)):
+    try:
+        run = generate_profile_content_service(
+            db,
+            profile_id,
+            model=payload.model if payload else None,
+        )
+    except GenerationNotFound as exc:
+        db.rollback()
+        raise HTTPException(404, "Content profile not found") from exc
+    except GenerationProviderFailure as exc:
+        db.commit()
+        raise HTTPException(502, str(exc)) from exc
+    except GenerationConflict as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from exc
+
+    db.commit()
+    db.refresh(run)
+    return run
