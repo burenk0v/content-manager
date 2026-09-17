@@ -38,6 +38,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
         "audit_logs",
         "generation_runs",
         "content_variants",
+        "content_profiles",
     }
     assert not tables.intersection({
         "topics",
@@ -84,6 +85,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
         },
         "generation_runs": {"ck_generation_runs_status_valid"},
         "content_variants": {"ck_content_variants_version_positive"},
+        "content_profiles": {"ck_content_profiles_schedule_type"},
     }
     for table_name, expected_names in expected_checks.items():
         actual_names = {item["name"] for item in inspector.get_check_constraints(table_name)}
@@ -126,7 +128,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
 
     with engine.connect() as connection:
         version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-    assert version == "0004_persistence_guards"
+    assert version == "0005_content_profiles"
 
 
 def test_alembic_can_downgrade_fresh_schema_to_base(tmp_path):
