@@ -143,6 +143,7 @@ class GenerationRun(Base):
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
+    lease_heartbeat_at = Column(DateTime, nullable=True, index=True)
     __table_args__ = (
         CheckConstraint("status IN ('running', 'succeeded', 'failed')", name="ck_generation_runs_status_valid"),
     )
