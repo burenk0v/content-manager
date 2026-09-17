@@ -34,7 +34,7 @@ jobs:
       - run: pip install -r src/requirements.txt
       - run: python scripts/check_architecture.py
       - run: python -m compileall -q src
-      - run: docker compose --env-file ../.env.example config
+      - run: docker compose -f ../docker-compose.yml --env-file ../.env.example config
       - run: PYTHONPATH=. pytest -q
       - run: alembic upgrade head
         env:
