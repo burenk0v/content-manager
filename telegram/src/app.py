@@ -221,7 +221,7 @@ async def main() -> None:
                 await transition_content(content_id, "draft")
                 await request_profile_regeneration(profile_id)
                 await callback.answer("Regenerating…")
-                if not await generate_and_send_profile(bot, ai_client, profile, ADMINS):
+                if not await generate_and_send_profile(bot, ai_client, profile, ADMINS, force=True):
                     await bot.send_message(callback.from_user.id, f"Не удалось перегенерировать профиль {profile['name']}.")
             else:
                 await callback.answer()
