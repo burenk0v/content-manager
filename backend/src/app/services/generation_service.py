@@ -37,7 +37,7 @@ def generate_content(
     if content.status in {"published", "archived"}:
         raise GenerationConflict("Content cannot be regenerated in its current state")
 
-    provider_name = "openai"
+    provider_name = "configured"
     run = GenerationRun(
         content_id=content.id,
         provider=provider_name,
@@ -53,6 +53,8 @@ def generate_content(
         provider_name = provider.name
         run.provider = provider_name
         generated = provider.generate(prompt=prompt, system_message=system_message, model=model)
+        if transform_generated is not None:
+            generated = transform_generated(generated)
         if transform_generated is not None:
             generated = transform_generated(generated)
     except (GenerationError, GenerationProviderFailure) as exc:
@@ -72,7 +74,7 @@ def generate_content(
 
     version = ContentVersion(
         content_id=content.id,
-        version=content.current_version.version + 1,
+        version=(content.versions[-1].version + 1) if content.versions else 1,
         body=generated,
         source=f"ai:{provider_name}",
         created_by=None,
@@ -133,3 +135,99 @@ def list_generations(db: Session, content_id: int) -> list[GenerationRun]:
         .limit(100)
         .all()
     )
+
+
+def _parse_autonomous_output(text: str) -> tuple[str, str]:
+    import re
+    value = (text or "").strip()
+    match = re.search(r"TOPIC:\s*(.+?)\s*POST:\s*(.+)", value, re.S | re.I)
+    if not match:
+        match = re.search(r"TOPIC:\s*(.+?)\s*MESSAGE:\s*(.+)", value, re.S | re.I)
+    if match:
+        topic, body = match.group(1).strip().strip('"').strip("'"), match.group(2).strip()
+    else:
+        lines = value.splitlines()
+        if len(lines) >= 2:
+            topic, body = lines[0].strip().strip('"').strip("'"), "\n".join(lines[1:]).strip()
+        else:
+            raise GenerationProviderFailure("AI provider returned an invalid autonomous content format")
+    if not topic or not body:
+        raise GenerationProviderFailure("AI provider returned empty autonomous content")
+    if len(body) < 20 or len(body) > 12000:
+        raise GenerationProviderFailure("AI provider returned content outside the supported length")
+    if re.search(r"<\/?(?:script|style|iframe)\b", body, re.I):
+        raise GenerationProviderFailure("AI provider returned unsafe content")
+    if re.search(r"\[(?:insert|add|write|replace)|\{\{.*?\}\}", body, re.I):
+        raise GenerationProviderFailure("AI provider returned placeholder content")
+    return topic[:200], body
+
+
+def build_profile_generation_prompt(profile: ContentProfile, used_topics: set[str]) -> str:
+    existing = ", ".join(sorted(used_topics)) if used_topics else "none"
+    return (
+        "You are an autonomous content editor. Choose the topic yourself; never ask the operator for one. "
+        "Create one complete publication-ready post for the configured profile. Avoid previously used topics. "
+        "Never output scripts, styles, placeholders, or an outline. Return exactly:\n"
+        "TOPIC: <short topic name>\n"
+        "POST: <ready-to-publish message>\n\n"
+        f"Channel: {profile.channel.name or profile.channel.external_id}\n"
+        f"Language: {profile.language}\n"
+        f"Topic/niche: {profile.topic_niche or 'Choose a useful, timely topic in the channel niche'}\n"
+        f"Tone: {profile.tone or 'Clear, useful, and natural'}\n"
+        f"Content format: {profile.content_format or 'Publication-ready post'}\n"
+        f"Editorial rules: {profile.rules or 'No clickbait; no placeholders; provide useful substance'}\n"
+        f"Previously used topics (avoid): {existing}"
+    )
+
+
+def generate_profile_content(db: Session, profile_id: int, *, model: str | None = None) -> GenerationRun:
+    profile = (
+        db.query(ContentProfile)
+        .filter(ContentProfile.id == profile_id, ContentProfile.is_active.is_(True))
+        .first()
+    )
+    if not profile:
+        raise GenerationNotFound
+
+    used_topics = {
+        str(row.title).strip().lower()
+        for row in db.query(Content.title)
+        .filter(Content.profile_id == profile.id, Content.title.isnot(None))
+        .all()
+        if row.title
+    }
+    content = Content(
+        workspace_id=profile.workspace_id,
+        profile_id=profile.id,
+        title="AI generation in progress",
+        language=profile.language,
+        status="draft",
+        created_by=None,
+    )
+    db.add(content)
+    db.flush()
+
+    topic_holder: dict[str, str] = {}
+
+    def transform_generated(generated: str) -> str:
+        topic, body = _parse_autonomous_output(generated)
+        topic_holder["topic"] = topic
+        return body
+
+    try:
+        run = generate_content(
+            db,
+            content.id,
+            prompt=build_profile_generation_prompt(profile, used_topics),
+            system_message="You are an autonomous content editor. Produce complete publication-ready content.",
+            model=model,
+            transform_generated=transform_generated,
+        )
+    except GenerationProviderFailure:
+        profile.regeneration_requested = True
+        db.flush()
+        raise
+
+    content.title = topic_holder["topic"]
+    db.flush()
+    return run
