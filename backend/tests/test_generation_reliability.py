@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from tests.test_foundation_api import HEADERS, client
 from src.app.models import Content, GenerationRun
-from src.app.db import SessionLocal
+from tests.test_foundation_api import TestingSession
 
 
 def test_generation_blocks_duplicate_running_run(monkeypatch):
@@ -16,7 +16,7 @@ def test_generation_blocks_duplicate_running_run(monkeypatch):
     first = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert first.status_code == 201
     run = first.json()
-    db = SessionLocal()
+    db = TestingSession()
     try:
         content = db.query(Content).filter(Content.id == run["content_id"]).first()
         content.status = "draft"
