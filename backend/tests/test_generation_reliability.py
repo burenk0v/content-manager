@@ -44,7 +44,7 @@ def test_stale_generation_recovery_requeues_profile(monkeypatch):
     finally:
         db.close()
     monkeypatch.setenv("GENERATION_LEASE_TIMEOUT_SECONDS", "60")
-    response = client.post("/ai/generations/recover-stale", headers=HEADERS)
+    response = client.post("/content/generations/recover-stale", headers=HEADERS)
     assert response.status_code == 200
     recovered = next(item for item in response.json() if item["id"] == run_id)
     assert recovered["status"] == "failed"
