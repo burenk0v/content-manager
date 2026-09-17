@@ -3,91 +3,42 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
-    <h1 class="page-title">Content Scheduler Dashboard</h1>
+    <h1 class="page-title">Autonomous AI Content Manager</h1>
+    <p>Configure your content profiles once. AI generates autonomously; Telegram is the approval console.</p>
 
-    <div class="status {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
-        Backend status: {{ backend_status }}
-    </div>
-    <div class="status {% if db_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">
-        Database status: {{ db_status }}
-    </div>
+    <div class="status {% if backend_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">Backend status: {{ backend_status }}</div>
+    <div class="status {% if db_status == 'Running' %}status-running{% else %}status-not-running{% endif %}">Database status: {{ db_status }}</div>
 
-    {% if messages %}
-        {% for message in messages %}
-            <div class="message {{ message.tags }}">{{ message }}</div>
-        {% endfor %}
-    {% endif %}
+    {% if messages %}{% for message in messages %}<div class="message {{ message.tags }}">{{ message }}</div>{% endfor %}{% endif %}
 
     <div class="dashboard-grid">
         <div class="panel">
-            <h2>Topics</h2>
-            <p>Total topics: {{ topic_count }}</p>
-            <a href="{% url 'auth_app:topics' %}" class="nav-link">Manage topics</a>
+            <h2>Content Profiles</h2>
+            <p>Channel, niche, tone, format, rules and autonomous cadence.</p>
+            <a href="{% url 'auth_app:content_profiles' %}" class="nav-link">Configure profiles</a>
         </div>
-
-        <div class="panel">
-            <h2>Schedules</h2>
-            <p>Total schedules: {{ schedule_count }}</p>
-            <a href="{% url 'auth_app:schedules' %}" class="nav-link">Manage schedules</a>
-        </div>
-
-        <div class="panel">
-            <h2>Prompts</h2>
-            <p>Total prompts: {{ prompt_count }}</p>
-            <a href="{% url 'auth_app:prompts' %}" class="nav-link" style="background-color: #6f42c1;">Manage prompts</a>
-        </div>
-
-        <div class="panel">
-            <h2>Assistant Messages</h2>
-            <p>Total assistant messages: {{ assistant_message_count }}</p>
-            <a href="{% url 'auth_app:assistant_messages' %}" class="nav-link" style="background-color: #fd7e14;">Manage assistant messages</a>
-        </div>
-
         <div class="panel">
             <h2>Drafts</h2>
             <p>Total drafts: {{ draft_count }}</p>
             <a href="{% url 'auth_app:drafts' %}" class="nav-link" style="background-color: #28a745;">Manage drafts</a>
         </div>
-
         <div class="panel">
             <h2>Telegram Settings</h2>
             <p>Your personal Telegram/OpenAI configuration</p>
             <a href="{% url 'auth_app:telegram_settings' %}" class="nav-link" style="background-color: #0f766e;">Open settings</a>
         </div>
+        <div class="panel">
+            <h2>Legacy Configuration</h2>
+            <p>Schedules, prompts, assistant messages and topics remain available for compatibility.</p>
+            <a href="{% url 'auth_app:schedules' %}" class="nav-link">Legacy schedules</a>
+        </div>
     </div>
 
     <div class="panel" style="margin-top: 24px;">
         <h2>Docker Containers</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Container</th>
-                    <th>Status</th>
-                    <th>Health</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in container_statuses %}
-                    <tr>
-                        <td>{{ item.name }}</td>
-                        <td>{{ item.status }}</td>
-                        <td>{{ item.health }}</td>
-                        <td>
-                            <form method="post" style="margin: 0;">
-                                {% csrf_token %}
-                                <input type="hidden" name="action" value="restart_container">
-                                <input type="hidden" name="container_name" value="{{ item.name }}">
-                                <button type="submit" class="small-button edit">Restart</button>
-                            </form>
-                        </td>
-                    </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <table><thead><tr><th>Container</th><th>Status</th><th>Health</th><th>Action</th></tr></thead><tbody>
+        {% for item in container_statuses %}<tr><td>{{ item.name }}</td><td>{{ item.status }}</td><td>{{ item.health }}</td><td><form method="post" style="margin: 0;">{% csrf_token %}<input type="hidden" name="action" value="restart_container"><input type="hidden" name="container_name" value="{{ item.name }}"><button type="submit" class="small-button edit">Restart</button></form></td></tr>{% endfor %}
+        </tbody></table>
     </div>
-
-    <div class="nav-row">
-        <a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a>
-    </div>
+    <div class="nav-row"><a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a></div>
 {% endblock %}
