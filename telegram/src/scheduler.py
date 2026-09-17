@@ -51,6 +51,14 @@ async def request_profile_regeneration(profile_id: int) -> dict[str, Any]:
     return response.json()
 
 
+async def claim_profile_run(profile_id: int) -> dict[str, Any]:
+    response = await backend_request("POST", f"/content/profiles/{profile_id}/claim")
+    if response.status_code == 409:
+        return {}
+    response.raise_for_status()
+    return response.json()
+
+
 async def mark_profile_run(profile_id: int) -> dict[str, Any]:
     response = await backend_request("POST", f"/content/profiles/{profile_id}/run")
     response.raise_for_status()
@@ -220,10 +228,13 @@ def build_generation_prompt(profile: dict[str, Any], used_names: set[str]) -> st
 
 
 async def generate_and_send_profile(bot: Bot, ai_client: OpenAIClient, profile: dict[str, Any], admins: list[int]) -> bool:
-    current = await fetch_profile(profile["id"])
-    if not current or not current.get("is_active"):
+    try:
+        profile = await claim_profile_run(profile["id"])
+    except Exception:
+        logging.exception("Failed to claim profile %s", profile["id"])
         return False
-    profile = current
+    if not profile:
+        return False
     contents = await fetch_contents(profile["workspace_id"])
     used_names = {str(item.get("title") or "").strip().lower() for item in contents if item.get("title")}
 
@@ -262,7 +273,8 @@ async def generate_and_send_profile(bot: Bot, ai_client: OpenAIClient, profile: 
         )
         return await send_admin_message(bot, payload, admins, keyboard)
 
-    await send_admin_message(bot, f"⚠️ Не удалось подготовить валидный пост для профиля {profile['name']} после 3 попыток.", admins)
+    await request_profile_regeneration(profile["id"])
+    await send_admin_message(bot, f"⚠️ Не удалось подготовить валидный пост для профиля {profile['name']} после 3 попыток. Профиль оставлен в очереди на повтор.", admins)
     return False
 
 
