@@ -76,7 +76,7 @@
             <div class="grid">
                 <div>
                     <label>Workspace</label>
-                    <select name="workspace_id" required >
+                    <select name="workspace_id" required onchange="window.location.href='?workspace_id=' + this.value">
                         <option value="">Select workspace</option>
                         {% for workspace in workspaces %}
                             <option value="{{ workspace.id }}" {% if edit_profile and edit_profile.workspace_id == workspace.id or request.POST.workspace_id == workspace.id|stringformat:'s' or request.GET.workspace_id == workspace.id|stringformat:'s' %}selected{% endif %}>{{ workspace.name }}</option>
