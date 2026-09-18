@@ -36,6 +36,8 @@ jobs:
       - run: python -m compileall -q src
       - run: docker compose -f ../docker-compose.yml --env-file ../.env.example config
       - run: PYTHONPATH=. pytest -q
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/content_manager
       - run: alembic upgrade head
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/content_manager
