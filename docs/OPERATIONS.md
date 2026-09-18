@@ -18,6 +18,19 @@ docker compose logs --tail=200 telegram
 docker compose logs --tail=200 frontend
 ~~~
 
+## Database backups
+
+Back up PostgreSQL before upgrades and on a regular schedule. The repository includes scripts that use the running Compose database container:
+
+~~~bash
+./scripts/backup_postgres.sh
+./scripts/restore_postgres.sh backups/content-manager-YYYYMMDD-HHMMSS.dump
+~~~
+
+Backups are custom-format PostgreSQL dumps. Store them outside the deployment host as well; a Docker volume is not a backup.
+
+After restoring, verify the backend readiness endpoint and Telegram `/status`. Never restore over the only copy of a production backup.
+
 ## Generation operations
 
 A GenerationRun is durable state. For an abandoned run, the backend can recover stale runs through the service-protected recovery endpoint. The scheduler invokes recovery before claiming new due profiles.
