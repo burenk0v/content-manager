@@ -145,7 +145,6 @@ def test_generation_heartbeat_updates_running_run(monkeypatch):
     monkeypatch.setattr(generation_service, "_generation_heartbeat_interval_seconds", lambda: 0.01)
 
     stop = threading.Event()
-    generation_service._heartbeat_generation(123, stop) if False else None
     worker = threading.Thread(target=generation_service._heartbeat_generation, args=(123, stop))
     worker.start()
     time.sleep(0.03)
