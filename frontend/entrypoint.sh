@@ -1,10 +1,8 @@
 #!/bin/bash
 set -e
 
-# Run migrations
 python src/manage.py migrate
 
-# Optionally bootstrap the first operator. Never create a hard-coded default account.
 if [ -n "${ADMIN_USERNAME:-}" ] && [ -n "${ADMIN_PASSWORD:-}" ] && [ -n "${ADMIN_EMAIL:-}" ]; then
 python src/manage.py shell <<EOF
 import os
@@ -25,13 +23,9 @@ elif not user.is_superuser:
 EOF
 fi
 
-# Generate self-signed certificate if needed
 mkdir -p /certs
 if [ ! -f /certs/localhost.crt ] || [ ! -f /certs/localhost.key ]; then
-    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-        -keyout /certs/localhost.key -out /certs/localhost.crt \
-        -subj '/CN=localhost' >/dev/null 2>&1
+    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes         -keyout /certs/localhost.key -out /certs/localhost.crt         -subj '/CN=localhost' >/dev/null 2>&1
 fi
 
-# Start Django development server with HTTPS on non-privileged port
-python src/manage.py runserver_plus --cert-file /certs/localhost.crt --key-file /certs/localhost.key 0.0.0.0:8443
+exec uvicorn mysite.asgi:application --app-dir src --host 0.0.0.0 --port 8443     --ssl-keyfile /certs/localhost.key --ssl-certfile /certs/localhost.crt
