@@ -105,6 +105,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
         "error_message",
         "created_at",
         "completed_at",
+        "lease_heartbeat_at",
     } <= generation_columns
 
     generation_indexes = {index["name"] for index in inspector.get_indexes("generation_runs")}
@@ -131,7 +132,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
 
     with engine.connect() as connection:
         version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-    assert version == "0006_approval_notifications"
+    assert version == "0007_generation_run_lease"
 
 
 def test_alembic_can_downgrade_fresh_schema_to_base(tmp_path):
