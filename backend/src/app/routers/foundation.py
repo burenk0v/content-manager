@@ -156,10 +156,20 @@ class PublicationReconciliation(BaseModel):
     error_message: Optional[str] = Field(None, min_length=1, max_length=4000)
 
 
-def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
-    expected = os.environ.get("SERVICE_ACCOUNT_TOKEN")
+def _require_token(x_service_token: Optional[str], expected: Optional[str]) -> None:
     if not expected or not x_service_token or not hmac.compare_digest(x_service_token, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
+
+
+def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
+    _require_token(x_service_token, os.environ.get("SERVICE_ACCOUNT_TOKEN"))
+
+
+def require_publication_worker_token(x_service_token: Optional[str] = Header(None)) -> None:
+    expected = os.environ.get("PUBLICATION_WORKER_TOKEN")
+    if not expected and os.environ.get("APP_ENV", "development").lower() not in {"production", "prod"}:
+        expected = os.environ.get("SERVICE_ACCOUNT_TOKEN")
+    _require_token(x_service_token, expected)
 
 
 def publication_out(publication: Publication) -> PublicationOut:
@@ -442,7 +452,7 @@ def approve_and_schedule_content(content_id: int, payload: PublicationCreate, db
     return publication_out(publication)
 
 
-@router.get("/publications/ready", response_model=List[PublicationReadyOut], dependencies=[Depends(require_service_token)])
+@router.get("/publications/ready", response_model=List[PublicationReadyOut], dependencies=[Depends(require_publication_worker_token)])
 def list_ready_publications(limit: int = 20, db: Session = Depends(get_db)):
     from sqlalchemy import or_
     now = datetime.utcnow()
@@ -450,7 +460,7 @@ def list_ready_publications(limit: int = 20, db: Session = Depends(get_db)):
     return [publication_ready_out(item) for item in query.all()]
 
 
-@router.get("/publications/unknown", response_model=List[PublicationUnknownOut], dependencies=[Depends(require_service_token)])
+@router.get("/publications/unknown", response_model=List[PublicationUnknownOut], dependencies=[Depends(require_publication_worker_token)])
 def list_unknown_publications(limit: int = 20, db: Session = Depends(get_db)):
     query = db.query(Publication).join(PublicationOperation).join(Channel).filter(Publication.status == "failed", PublicationOperation.status == "unknown", Channel.is_active.is_(True)).order_by(Publication.id.asc()).limit(max(1, min(limit, 100)))
     return [publication_unknown_out(item) for item in query.all()]
@@ -464,31 +474,31 @@ def list_publications(workspace_id: Optional[int] = None, db: Session = Depends(
     return [publication_out(item) for item in query.order_by(Publication.scheduled_at.asc(), Publication.id.asc()).all()]
 
 
-@router.post("/publications/recover-stale", response_model=List[PublicationOut], dependencies=[Depends(require_service_token)])
+@router.post("/publications/recover-stale", response_model=List[PublicationOut], dependencies=[Depends(require_publication_worker_token)])
 def recover_stale_publications(db: Session = Depends(get_db)):
     return [publication_out(item) for item in publication_service.recover_stale(db)]
 
 
-@router.post("/publications/{publication_id}/claim", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/claim", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def claim_publication(publication_id: int, payload: PublicationClaim, db: Session = Depends(get_db)):
     return publication_out(publication_service.claim(db, publication_id, payload.worker_id))
 
 
-@router.post("/publications/{publication_id}/heartbeat", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/heartbeat", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def heartbeat_publication(publication_id: int, payload: PublicationLease, db: Session = Depends(get_db)):
     return publication_out(publication_service.heartbeat(db, publication_id, payload.worker_id, payload.processing_token))
 
 
-@router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def complete_publication(publication_id: int, payload: PublicationComplete, db: Session = Depends(get_db)):
     return publication_out(publication_service.complete(db, publication_id, payload.worker_id, payload.processing_token, payload.external_id))
 
 
-@router.post("/publications/{publication_id}/fail", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/fail", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def fail_publication(publication_id: int, payload: PublicationFail, db: Session = Depends(get_db)):
     return publication_out(publication_service.fail(db, publication_id, payload.worker_id, payload.processing_token, payload.error_message, payload.retry))
 
 
-@router.post("/publications/{publication_id}/reconcile", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/reconcile", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def reconcile_publication(publication_id: int, payload: PublicationReconciliation, db: Session = Depends(get_db)):
     return publication_out(publication_service.reconcile_unknown(db, publication_id, payload.outcome, payload.external_id, payload.error_message))
