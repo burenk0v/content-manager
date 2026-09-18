@@ -135,25 +135,6 @@ def get_docker_statuses():
     return statuses
 
 
-def restart_docker_container(container_name: str) -> tuple[bool, str]:
-    if container_name not in DOCKER_MANAGED_CONTAINERS:
-        return False, 'Unsupported container name.'
-
-    try:
-        client = _docker_client()
-        try:
-            container = client.containers.get(container_name)
-            container.restart(timeout=10)
-        finally:
-            client.close()
-        return True, f'Container {container_name} restarted.'
-    except NotFound:
-        return False, f'Container {container_name} not found.'
-    except DockerException as exc:
-        return False, str(exc) or 'Docker restart failed.'
-    except Exception as exc:
-        return False, str(exc) or 'Docker restart failed.'
-
 
 def login_view(request):
     """Login page"""
@@ -182,17 +163,6 @@ def set_theme_view(request):
 @login_required
 def dashboard_view(request):
     """Protected dashboard page with counts only."""
-    if request.method == 'POST':
-        action = request.POST.get('action')
-        if action == 'restart_container':
-            container_name = request.POST.get('container_name', '').strip()
-            ok, message = restart_docker_container(container_name)
-            if ok:
-                messages.success(request, message)
-            else:
-                messages.error(request, message)
-            return redirect('auth_app:dashboard')
-
     health = get_backend_health()
     backend_status = health['backend']
     db_status = health['db']
