@@ -217,58 +217,58 @@ def generate_content(
             heartbeat_thread.join(timeout=2.0)
 
     try:
-        version = ContentVersion(
-            content_id=content.id,
-            version=(content.versions[-1].version + 1) if content.versions else 1,
-            body=generated,
-            source=f"ai:{provider_name}",
-            created_by=None,
-        )
-        db.add(version)
-        db.flush()
-
-        previous_status = content.status
-    if previous_status != "draft":
-        try:
-            transition(previous_status, "draft")
-        except InvalidContentTransition as exc:
-            raise GenerationConflict("Content cannot be regenerated from its current state") from exc
-        content.status = "draft"
-    content.updated_at = datetime.utcnow()
-
-    run.content_version_id = version.id
-    run.status = "succeeded"
-    run.completed_at = datetime.utcnow()
-    run.lease_heartbeat_at = None
-    audit(
-        db,
-        content.workspace_id,
-        "generation_run",
-        run.id,
-        "completed",
-        event_type="content.generation_completed",
-        metadata={"provider": provider_name, "model": model, "content_version_id": version.id},
-    )
-    audit(
-        db,
-        content.workspace_id,
-        "content_version",
-        version.id,
-        "created",
-        event_type="content_version.created",
-        metadata={"source": version.source, "generation_run_id": run.id},
-    )
-    if previous_status != "draft":
+            version = ContentVersion(
+                content_id=content.id,
+                version=(content.versions[-1].version + 1) if content.versions else 1,
+                body=generated,
+                source=f"ai:{provider_name}",
+                created_by=None,
+            )
+            db.add(version)
+            db.flush()
+    
+            previous_status = content.status
+        if previous_status != "draft":
+            try:
+                transition(previous_status, "draft")
+            except InvalidContentTransition as exc:
+                raise GenerationConflict("Content cannot be regenerated from its current state") from exc
+            content.status = "draft"
+        content.updated_at = datetime.utcnow()
+    
+        run.content_version_id = version.id
+        run.status = "succeeded"
+        run.completed_at = datetime.utcnow()
+        run.lease_heartbeat_at = None
         audit(
             db,
             content.workspace_id,
-            "content",
-            content.id,
-            "status_changed",
-            event_type="content.approval_invalidated",
-            metadata={"from": previous_status, "to": "draft", "generation_run_id": run.id},
+            "generation_run",
+            run.id,
+            "completed",
+            event_type="content.generation_completed",
+            metadata={"provider": provider_name, "model": model, "content_version_id": version.id},
         )
-        return run
+        audit(
+            db,
+            content.workspace_id,
+            "content_version",
+            version.id,
+            "created",
+            event_type="content_version.created",
+            metadata={"source": version.source, "generation_run_id": run.id},
+        )
+        if previous_status != "draft":
+            audit(
+                db,
+                content.workspace_id,
+                "content",
+                content.id,
+                "status_changed",
+                event_type="content.approval_invalidated",
+                metadata={"from": previous_status, "to": "draft", "generation_run_id": run.id},
+            )
+            return run
     except GenerationProviderFailure:
         raise
     except Exception as exc:
