@@ -6,7 +6,7 @@ Content Manager runs as a small Docker Compose deployment: PostgreSQL, Backend, 
 
 Copy .env.example to .env and replace every CHANGE_ME_* value. Generate long random values for BACKEND_SECRET_KEY, SERVICE_ACCOUNT_TOKEN, and FRONTEND_SECRET_KEY.
 
-The Telegram bot token and ADMINS are required for the approval console. WEBAPP_URL must be an HTTPS URL reachable by Telegram clients.
+The Telegram bot token and ADMINS are required for the approval console. GENERATION_LEASE_TIMEOUT_SECONDS defaults to 900 seconds and controls stale generation recovery. WEBAPP_URL must be an HTTPS URL reachable by Telegram clients.
 
 ## 2. Start
 

@@ -86,7 +86,7 @@ This system provides:
 
 The supported product flow is `Content Profile → autonomous AI generation → Telegram approval → publication worker`. Web is the configuration surface; Telegram is the approval and operations console.
 
-For a fresh self-hosted deployment, copy `.env.example` to `.env`, replace all `CHANGE_ME_*` values, and run `docker compose up -d --build`. The backend applies Alembic migrations on startup and the frontend applies Django migrations before serving the UI. See `docs/SELF_HOSTING.md` for the operational runbook.
+For a fresh self-hosted deployment, copy `.env.example` to `.env`, replace all `CHANGE_ME_*` values, and run `docker compose up -d --build`. The backend applies Alembic migrations on startup and the frontend applies Django migrations before serving the UI. See `docs/GETTING_STARTED.md` for the first-run guide, `docs/SELF_HOSTING.md` for the deployment runbook, and `docs/RELEASE_CHECKLIST.md` before production releases.
 
 The frontend no longer creates a hard-coded default admin account. Set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_EMAIL` in `.env` for the initial operator account.
 
@@ -117,6 +117,18 @@ Required configuration:
 | `PUBLICATION_MAX_ATTEMPTS` | `5` | Maximum publication attempts |
 | `PUBLICATION_RETRY_DELAY_SECONDS` | `60` | Initial retry delay; exponential backoff is applied |
 | `PUBLICATION_RETRY_MAX_DELAY_SECONDS` | `3600` | Maximum retry delay |
+
+## Documentation
+
+- [Getting started](docs/GETTING_STARTED.md)
+- [Configuration](docs/CONFIGURATION.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Operations](docs/OPERATIONS.md)
+- [Testing](docs/TESTING.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Release checklist](docs/RELEASE_CHECKLIST.md)
+- [Self-hosting](docs/SELF_HOSTING.md)
 
 ## Supported Languages
 
