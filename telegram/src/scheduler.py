@@ -36,6 +36,11 @@ async def fetch_ready_profiles() -> list[dict[str, Any]]:
     return await fetch_collection("/content/profiles/ready")
 
 
+async def recover_stale_generations() -> None:
+    response = await backend_request("POST", "/content/generations/recover-stale")
+    response.raise_for_status()
+
+
 async def fetch_profile(profile_id: int) -> dict[str, Any] | None:
     response = await backend_request("GET", f"/content/profiles/{profile_id}")
     if response.status_code == 404:
@@ -328,6 +333,7 @@ async def schedule_worker(bot: Bot, admins: list[int]) -> None:
     while True:
         try:
             await retry_pending_notifications(bot, admins)
+            await recover_stale_generations()
             profiles = await fetch_ready_profiles()
             for profile in profiles:
                 await generate_and_send_profile(bot, profile, admins)

@@ -16,6 +16,7 @@ from src.app.services.generation_service import (
     generate_content as generate_content_service,
     generate_profile_content as generate_profile_content_service,
     list_generations as list_generations_service,
+    recover_stale_generations as recover_stale_generations_service,
 )
 
 router = APIRouter()
@@ -108,3 +109,12 @@ def generate_profile(profile_id: int, payload: GenerateContent | None = None, db
     db.commit()
     db.refresh(run)
     return run
+
+
+@router.post(
+    "/generations/recover-stale",
+    response_model=list[GenerationRunOut],
+    dependencies=[Depends(require_service_token)],
+)
+def recover_stale_generations(db: Session = Depends(get_db)):
+    return recover_stale_generations_service(db)
