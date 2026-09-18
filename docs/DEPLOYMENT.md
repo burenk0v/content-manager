@@ -2,7 +2,7 @@
 
 ## Production topology
 
-The supported deployment is Docker Compose with four services:
+The supported deployment is Docker Compose with three application services:
 
 ~~~text
 PostgreSQL
