@@ -7,14 +7,6 @@ import requests
 import os
 import re
 
-try:
-    import docker
-    from docker.errors import DockerException, NotFound
-except Exception:  # pragma: no cover - optional dependency at import time
-    docker = None
-    DockerException = Exception
-    NotFound = Exception
-
 from auth_app.models import set_user_theme, get_user_telegram_settings, set_user_telegram_settings
 from auth_app.timezone_utils import (
     compute_schedule_next_run_display,
@@ -34,7 +26,6 @@ DEFAULT_TELEGRAM_SETTINGS = {
     'backend_api_url': os.environ.get('BACKEND_API_URL', 'http://backend:8000'),
     'schedule_check_interval_seconds': int(os.environ.get('SCHEDULE_CHECK_INTERVAL_SECONDS', '10')),
 }
-DOCKER_MANAGED_CONTAINERS = ('database', 'backend', 'frontend', 'telegram')
 LANGUAGE_OPTIONS = [
     ('ru', 'Russian'),
     ('en', 'English'),
@@ -100,42 +91,6 @@ def get_backend_health():
     return status
 
 
-def _docker_client():
-    if docker is None:
-        raise RuntimeError('Docker SDK is not installed')
-    docker_host = os.environ.get('DOCKER_HOST')
-    if not docker_host:
-        raise RuntimeError('DOCKER_HOST is required for Docker management')
-    return docker.DockerClient(base_url=docker_host)
-
-
-def get_docker_statuses():
-    statuses = []
-    try:
-        client = _docker_client()
-        try:
-            for name in DOCKER_MANAGED_CONTAINERS:
-                try:
-                    container = client.containers.get(name)
-                    container.reload()
-                    state = container.attrs.get('State', {})
-                    statuses.append({
-                        'name': name,
-                        'status': state.get('Status', container.status or 'unknown'),
-                        'health': state.get('Health', {}).get('Status') or 'n/a',
-                    })
-                except NotFound:
-                    statuses.append({'name': name, 'status': 'not-found', 'health': 'n/a'})
-        finally:
-            client.close()
-    except Exception as exc:
-        error_message = str(exc) or 'Unable to connect to Docker daemon'
-        for name in DOCKER_MANAGED_CONTAINERS:
-            statuses.append({'name': name, 'status': 'unavailable', 'health': error_message})
-    return statuses
-
-
-
 def login_view(request):
     """Login page"""
     if request.method == 'POST':
@@ -191,12 +146,9 @@ def dashboard_view(request):
     except Exception:
         messages.error(request, 'Unable to load backend counts.')
 
-    container_statuses = get_docker_statuses()
-
     return render(request, 'auth_app/dashboard.html', {
         'backend_status': backend_status,
         'db_status': db_status,
-        'container_statuses': container_statuses,
         'topic_count': topic_count,
         'prompt_count': prompt_count,
         'assistant_message_count': assistant_message_count,
