@@ -34,12 +34,5 @@
         </div>
     </div>
 
-    <div class="panel" style="margin-top: 24px;">
-        <h2>Docker Containers</h2>
-        <p>Read-only runtime status. Use <code>docker compose restart &lt;service&gt;</code> from the host for administrative restarts.</p>
-        <table><thead><tr><th>Container</th><th>Status</th><th>Health</th></tr></thead><tbody>
-        {% for item in container_statuses %}<tr><td>{{ item.name }}</td><td>{{ item.status }}</td><td>{{ item.health }}</td></tr>{% endfor %}
-        </tbody></table>
-    </div>
     <div class="nav-row"><a href="{% url 'auth_app:logout' %}" class="logout-link">Logout</a></div>
 {% endblock %}

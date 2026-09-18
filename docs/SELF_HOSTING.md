@@ -48,7 +48,7 @@ The frontend container serves plain HTTP through Uvicorn on port 8000 and is bou
 
 Set both WEBAPP_URL and FRONTEND_PUBLIC_URL to the same public HTTPS origin, for example `https://content.example.com`. The reverse proxy should forward that origin to `http://127.0.0.1:3000`.
 
-The frontend no longer has Docker write access. The Docker socket proxy is read-only at the API level and is used only for container status inspection. Keep the management interface behind trusted network controls and do not expose the Docker socket to unrelated containers.
+The frontend no longer has Docker write access. The frontend has no Docker socket access. Runtime administration is performed from the host with Docker Compose; keep the management interface behind trusted network controls.
 
 ## Approval notification recovery
 

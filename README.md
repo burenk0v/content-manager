@@ -56,7 +56,6 @@ This system provides:
 - **Port**: 8000 (plain HTTP inside the deployment; terminate public HTTPS at a reverse proxy)
 - **Pages**:
   - Dashboard — backend and database health overview
-  - Dashboard — Docker container statuses (read-only)
   - Topics — view and delete AI-generated topics
   - Schedules — create, edit, delete publication schedules
   - Drafts — manage content drafts
@@ -66,7 +65,6 @@ This system provides:
   - Service-to-backend authentication
   - Schedule timezone conversion
   - Per-user Telegram settings stored in UI database
-  - Docker container status (read-only)
 
 #### Telegram Bot (Aiogram)
 

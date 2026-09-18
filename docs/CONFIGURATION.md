@@ -45,4 +45,4 @@ Configuration is supplied through .env and passed to the services by Docker Comp
 
 Use unique, high-entropy values for all application secrets and the service token. Restrict access to the Web UI and never expose the Docker socket to unrelated workloads. Rotate credentials if they are disclosed.
 
-The frontend receives only read-only Docker API access for status inspection; it cannot restart containers or create/modify/remove Docker resources.
+The frontend has no Docker API or Docker socket access. Runtime administration is performed from the host with Docker Compose.
