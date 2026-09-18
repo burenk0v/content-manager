@@ -19,6 +19,8 @@ from scheduler import (
     approve_and_schedule_content,
     request_profile_regeneration,
     schedule_worker,
+    transition_content,
+    verify_callback_data,
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -192,25 +194,27 @@ async def main() -> None:
             await callback.answer("Access denied.", show_alert=True)
             return
         data = callback.data or ""
+        verified = verify_callback_data(data)
+        if not verified:
+            await callback.answer("Invalid or expired action.", show_alert=True)
+            return
+        action, identifiers = verified
         try:
-            if data.startswith("approve:"):
-                _, content_id_raw, profile_id_raw = data.split(":", 2)
-                content_id = int(content_id_raw)
-                profile = await fetch_profile(int(profile_id_raw))
+            if action == "approve":
+                content_id, profile_id = identifiers
+                profile = await fetch_profile(profile_id)
                 if not profile:
                     await callback.answer("Профиль не найден.", show_alert=True)
                     return
                 publication = await approve_and_schedule_content(content_id, profile["channel_id"])
                 await callback.answer("Post scheduled for publication.")
                 await bot.send_message(callback.from_user.id, f"Publication #{publication['id']} queued for {profile['name']}.")
-            elif data.startswith("reject:"):
-                content_id = int(data.split(":", 1)[1])
+            elif action == "reject":
+                content_id = identifiers[0]
                 await transition_content(content_id, "draft")
                 await callback.answer("Post rejected.")
-            elif data.startswith("regenerate:"):
-                _, profile_id_raw, content_id_raw = data.split(":", 2)
-                profile_id = int(profile_id_raw)
-                content_id = int(content_id_raw)
+            elif action == "regenerate":
+                profile_id, content_id = identifiers
                 profile = await fetch_profile(profile_id)
                 if not profile or not profile.get("is_active"):
                     await callback.answer("Профиль недоступен.", show_alert=True)

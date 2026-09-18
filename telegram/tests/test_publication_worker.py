@@ -2,6 +2,7 @@ import pytest
 
 from providers.base import AmbiguousPublicationError, PermanentPublicationError, ReconciliationResult
 from src.publication_worker import publish_one, reconcile_unknown_publication
+from src.scheduler import build_callback_data, verify_callback_data
 
 
 class FakeBot:
@@ -196,3 +197,18 @@ async def test_reconcile_unknown_publication_leaves_unknown_when_provider_cannot
     publication = {"id": 12, "channel_platform": "telegram", "channel_external_id": "@channel", "provider_operation_key": "publication:provider-12"}
     await reconcile_unknown_publication(FakeBot(), publication)
     assert calls == []
+
+
+
+def test_telegram_callback_signature_rejects_tampering(monkeypatch):
+    monkeypatch.setattr("src.scheduler.CALLBACK_SECRET", "test-secret")
+    data = build_callback_data("approve", 12, 34)
+    assert verify_callback_data(data) == ("approve", [12, 34])
+    assert verify_callback_data(data.replace(":12:", ":13:")) is None
+    assert verify_callback_data(data[:-1] + ("0" if data[-1] != "0" else "1")) is None
+
+
+def test_telegram_callback_signature_rejects_wrong_shape(monkeypatch):
+    monkeypatch.setattr("src.scheduler.CALLBACK_SECRET", "test-secret")
+    assert verify_callback_data(build_callback_data("reject", 12) + ":extra") is None
+    assert verify_callback_data("approve:12:34:invalid") is None

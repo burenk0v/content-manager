@@ -18,6 +18,7 @@ Configuration is supplied through .env and passed to the services by Docker Comp
 | ADMIN_EMAIL | yes | Initial Web operator email |
 | BOT_TOKEN | yes | Telegram bot token |
 | ADMINS | yes | Telegram administrator IDs |
+| TELEGRAM_CALLBACK_SECRET | yes | HMAC secret for Telegram approval actions |
 | WEBAPP_URL | yes | Public HTTPS Telegram WebApp URL |
 | FRONTEND_PUBLIC_URL | yes | Public HTTPS frontend origin |
 | OPENAI_API_KEY | yes | Current AI provider credential |

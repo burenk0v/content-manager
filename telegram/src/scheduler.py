@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import hashlib
+import hmac
 import os
 import re
 from html import escape
@@ -13,7 +15,40 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 SERVICE_TOKEN = os.getenv("SERVICE_ACCOUNT_TOKEN")
 SCHEDULE_CHECK_INTERVAL_SECONDS = int(os.getenv("SCHEDULE_CHECK_INTERVAL_SECONDS", "10"))
+CALLBACK_SECRET = os.getenv("TELEGRAM_CALLBACK_SECRET")
 
+
+
+
+def _callback_signature(action: str, *identifiers: int) -> str:
+    if not CALLBACK_SECRET:
+        raise RuntimeError("TELEGRAM_CALLBACK_SECRET is required")
+    payload = ":".join([action, *(str(value) for value in identifiers)])
+    return hmac.new(CALLBACK_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def build_callback_data(action: str, *identifiers: int) -> str:
+    payload = ":".join([action, *(str(value) for value in identifiers)])
+    return f"{payload}:{_callback_signature(action, *identifiers)}"
+
+
+def verify_callback_data(data: str) -> tuple[str, list[int]] | None:
+    parts = (data or "").split(":")
+    if len(parts) < 3 or not CALLBACK_SECRET:
+        return None
+    action, *raw_values, signature = parts
+    if action not in {"approve", "reject", "regenerate"}:
+        return None
+    expected_counts = {"approve": 2, "reject": 1, "regenerate": 2}
+    if len(raw_values) != expected_counts[action]:
+        return None
+    try:
+        identifiers = [int(value) for value in raw_values]
+    except ValueError:
+        return None
+    if not hmac.compare_digest(signature, _callback_signature(action, *identifiers)):
+        return None
+    return action, identifiers
 
 def get_backend_url(path: str) -> str:
     return f"{BACKEND_API_URL.rstrip('/')}{path}"
@@ -262,6 +297,17 @@ def build_generation_prompt(profile: dict[str, Any], used_names: set[str]) -> st
     )
 
 
+
+
+def approval_keyboard(content_id: int, profile_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Approve", callback_data=build_callback_data("approve", content_id, profile_id)),
+            InlineKeyboardButton(text="Reject", callback_data=build_callback_data("reject", content_id)),
+        ],
+        [InlineKeyboardButton(text="Regenerate", callback_data=build_callback_data("regenerate", profile_id, content_id))],
+    ])
+
 async def generate_and_send_profile(bot: Bot, profile: dict[str, Any], admins: list[int], *, force: bool = False) -> bool:
     try:
         claimed = await claim_profile_run(profile["id"], force=force)
@@ -288,13 +334,7 @@ async def generate_and_send_profile(bot: Bot, profile: dict[str, Any], admins: l
             logging.error("Generation run %s created without content %s", run.get("id"), run.get("content_id"))
             return False
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Approve", callback_data=f"approve:{item['id']}:{profile['id']}"),
-                InlineKeyboardButton(text="Reject", callback_data=f"reject:{item['id']}"),
-            ],
-            [InlineKeyboardButton(text="Regenerate", callback_data=f"regenerate:{profile['id']}:{item['id']}")],
-        ])
+        keyboard = approval_keyboard(int(item["id"]), int(profile["id"]))
         body = prepare_telegram_content(str(item.get("body") or ""))
         payload = (
             f"<b>Profile:</b> {escape(str(profile['name']))}\n"
@@ -328,13 +368,7 @@ async def retry_pending_notifications(bot: Bot, admins: list[int]) -> None:
             f"<b>Topic:</b> {escape(str(item.get('title') or 'Untitled'))}\n"
             f"<b>Language:</b> {escape(str(item.get('language') or profile.get('language') or 'en'))}\n\n{body}"
         )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Approve", callback_data=f"approve:{item['id']}:{profile['id']}"),
-                InlineKeyboardButton(text="Reject", callback_data=f"reject:{item['id']}"),
-            ],
-            [InlineKeyboardButton(text="Regenerate", callback_data=f"regenerate:{profile['id']}:{item['id']}")],
-        ])
+        keyboard = approval_keyboard(int(item["id"]), int(profile["id"]))
         if await send_admin_message(bot, payload, admins, keyboard):
             await complete_notification(int(item["id"]))
 
