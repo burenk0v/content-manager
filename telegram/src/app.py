@@ -19,7 +19,6 @@ from scheduler import (
     approve_and_schedule_content,
     request_profile_regeneration,
     schedule_worker,
-    transition_content,
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
