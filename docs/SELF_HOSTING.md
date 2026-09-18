@@ -36,11 +36,11 @@ Approve, reject, or regenerate directly from the Telegram message.
 
 ## 5. Upgrades and backups
 
-Back up PostgreSQL before upgrades. Use `./scripts/backup_postgres.sh` and keep at least one copy outside the deployment host.
+Back up PostgreSQL before upgrades. Use `bash scripts/backup_postgres.sh` and keep at least one copy outside the deployment host.
 
 For an upgrade: back up the database, pull the new version, run `docker compose up -d --build`, verify `/health/ready` and `docker compose ps`, then inspect Telegram `/status`.
 
-To restore a dump, stop application writers first, then run `./scripts/restore_postgres.sh <dump>` and verify readiness before resuming workers.
+To restore a dump, stop application writers first, then run `bash scripts/restore_postgres.sh <dump>` and verify readiness before resuming workers.
 
 ## Public HTTPS / Telegram WebApp
 
