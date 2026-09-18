@@ -10,7 +10,8 @@ Configuration is supplied through .env and passed to the services by Docker Comp
 | DB_PASSWORD | yes | PostgreSQL password |
 | DB_NAME | yes | PostgreSQL database |
 | BACKEND_SECRET_KEY | yes | Backend application secret |
-| SERVICE_ACCOUNT_TOKEN | yes | Internal service authentication |
+| SERVICE_ACCOUNT_TOKEN | yes | Internal service authentication for general backend clients |
+| PUBLICATION_WORKER_TOKEN | yes | Dedicated authentication token for publication worker endpoints |
 | FRONTEND_SECRET_KEY | yes | Django secret |
 | ADMIN_USERNAME | yes | Initial Web operator |
 | ADMIN_PASSWORD | yes | Initial Web operator password |
@@ -43,4 +44,4 @@ Configuration is supplied through .env and passed to the services by Docker Comp
 
 Use unique, high-entropy values for all application secrets and the service token. Restrict access to the Web UI and never expose the Docker socket to unrelated workloads. Rotate credentials if they are disclosed.
 
-The frontend has access to /var/run/docker.sock because its management UI can inspect and restart containers. Treat that host as privileged.
+The frontend does not receive the host Docker socket directly. Compose places a restricted Docker socket proxy between the frontend and Docker; the proxy permits container inspection and restart operations only. The proxy still has access to the host socket, so keep the deployment host trusted.

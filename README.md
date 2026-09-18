@@ -36,6 +36,7 @@ This system provides:
 #### Backend (FastAPI)
 
 - **Port**: 8000
+- **Health endpoints**: `GET /health/live` for process liveness and `GET /health/ready` for PostgreSQL readiness
 - **Key endpoints**:
   - `GET /` — service status
   - `GET /health/db` — database connectivity check
@@ -100,6 +101,7 @@ Required configuration:
 | `DB_PASSWORD` | `postgres` | PostgreSQL password |
 | `DB_NAME` | `content_manager` | Database name |
 | `SERVICE_ACCOUNT_TOKEN` | — | Backend authentication token |
+| `PUBLICATION_WORKER_TOKEN` | — | Dedicated authentication token for publication worker endpoints |
 | `FRONTEND_SECRET_KEY` | — | Django frontend secret key |
 | `BOT_TOKEN` | — | Used as initial value for per-user UI Telegram settings |
 | `ADMINS` | — | Used as initial value for per-user UI Telegram settings |
