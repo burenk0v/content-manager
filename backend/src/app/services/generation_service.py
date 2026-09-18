@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import os
 import threading
 
+from sqlalchemy import and_, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -66,17 +67,36 @@ def _heartbeat_generation(run_id: int, stop_event: threading.Event) -> None:
 def recover_stale_generations(db: Session) -> list[GenerationRun]:
     now = datetime.utcnow()
     cutoff = now - timedelta(seconds=generation_lease_timeout_seconds())
-    runs = (db.query(GenerationRun)
-        .filter(GenerationRun.status == "running",
+    candidates = (db.query(GenerationRun)
+        .filter(
+            GenerationRun.status == "running",
             ((GenerationRun.lease_heartbeat_at.is_not(None) & (GenerationRun.lease_heartbeat_at < cutoff)) |
-             (GenerationRun.lease_heartbeat_at.is_(None) & (GenerationRun.created_at < cutoff))))
+             (GenerationRun.lease_heartbeat_at.is_(None) & (GenerationRun.created_at < cutoff))),
+        )
         .order_by(GenerationRun.id.asc()).all())
     recovered = []
-    for run in runs:
-        run.status = "failed"
-        run.error_message = "Recovered stale generation run after worker restart or timeout"
-        run.completed_at = now
-        run.lease_heartbeat_at = None
+    for candidate in candidates:
+        result = db.execute(
+            update(GenerationRun)
+            .where(
+                GenerationRun.id == candidate.id,
+                GenerationRun.status == "running",
+                or_(
+                    and_(GenerationRun.lease_heartbeat_at.is_not(None), GenerationRun.lease_heartbeat_at < cutoff),
+                    and_(GenerationRun.lease_heartbeat_at.is_(None), GenerationRun.created_at < cutoff),
+                ),
+            )
+            .values(
+                status="failed",
+                error_message="Recovered stale generation run after worker restart or timeout",
+                completed_at=now,
+                lease_heartbeat_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            continue
+        run = db.query(GenerationRun).populate_existing().filter(GenerationRun.id == candidate.id).first()
         profile = run.content.profile
         if profile is not None:
             profile.regeneration_requested = True
@@ -156,6 +176,7 @@ def generate_content(
         if transform_generated is not None:
             generated = transform_generated(generated)
     except (GenerationError, GenerationProviderFailure) as exc:
+        db.rollback()
         run = db.query(GenerationRun).filter(GenerationRun.id == run.id).first() or run
         run.status = "failed"
         run.error_message = str(exc)
@@ -170,23 +191,43 @@ def generate_content(
             event_type="content.generation_failed",
             metadata={"provider": run.provider, "model": run.model},
         )
+        db.commit()
         raise GenerationProviderFailure(str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        run = db.query(GenerationRun).filter(GenerationRun.id == run.id).first() or run
+        run.status = "failed"
+        run.error_message = str(exc)[:4000]
+        run.completed_at = datetime.utcnow()
+        run.lease_heartbeat_at = None
+        audit(
+            db,
+            content.workspace_id,
+            "generation_run",
+            run.id,
+            "failed",
+            event_type="content.generation_failed",
+            metadata={"provider": run.provider, "model": run.model, "unexpected": True},
+        )
+        db.commit()
+        raise GenerationProviderFailure("Generation failed unexpectedly") from exc
     finally:
         heartbeat_stop.set()
         if heartbeat_thread is not None:
             heartbeat_thread.join(timeout=2.0)
 
-    version = ContentVersion(
-        content_id=content.id,
-        version=(content.versions[-1].version + 1) if content.versions else 1,
-        body=generated,
-        source=f"ai:{provider_name}",
-        created_by=None,
-    )
-    db.add(version)
-    db.flush()
+    try:
+        version = ContentVersion(
+            content_id=content.id,
+            version=(content.versions[-1].version + 1) if content.versions else 1,
+            body=generated,
+            source=f"ai:{provider_name}",
+            created_by=None,
+        )
+        db.add(version)
+        db.flush()
 
-    previous_status = content.status
+        previous_status = content.status
     if previous_status != "draft":
         try:
             transition(previous_status, "draft")
@@ -227,7 +268,27 @@ def generate_content(
             event_type="content.approval_invalidated",
             metadata={"from": previous_status, "to": "draft", "generation_run_id": run.id},
         )
-    return run
+        return run
+    except GenerationProviderFailure:
+        raise
+    except Exception as exc:
+        db.rollback()
+        run = db.query(GenerationRun).filter(GenerationRun.id == run.id).first() or run
+        run.status = "failed"
+        run.error_message = str(exc)[:4000]
+        run.completed_at = datetime.utcnow()
+        run.lease_heartbeat_at = None
+        audit(
+            db,
+            content.workspace_id,
+            "generation_run",
+            run.id,
+            "failed",
+            event_type="content.generation_failed",
+            metadata={"provider": run.provider, "model": run.model, "unexpected": True},
+        )
+        db.commit()
+        raise GenerationProviderFailure("Generation failed while persisting its result") from exc
 
 
 def list_generations(db: Session, content_id: int) -> list[GenerationRun]:
