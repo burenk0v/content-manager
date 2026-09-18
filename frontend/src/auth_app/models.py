@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from django.db import connection, models
+from django.db import models
 
 
 THEME_CHOICES = [
@@ -25,19 +25,9 @@ class UserTelegramSettings(models.Model):
 	schedule_check_interval_seconds = models.PositiveIntegerField(default=10)
 
 
-def ensure_preferences_schema():
-	existing_tables = set(connection.introspection.table_names())
-	with connection.schema_editor() as schema_editor:
-		if UserPreference._meta.db_table not in existing_tables:
-			schema_editor.create_model(UserPreference)
-		if UserTelegramSettings._meta.db_table not in existing_tables:
-			schema_editor.create_model(UserTelegramSettings)
-
-
 def get_user_theme(user) -> str:
 	if not getattr(user, 'is_authenticated', False):
-		return DEFAULT_THEME
-	ensure_preferences_schema()
+		return DEFAULT_THEME
 	preference, _ = UserPreference.objects.get_or_create(user=user, defaults={'theme': DEFAULT_THEME})
 	return preference.theme
 
