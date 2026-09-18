@@ -154,3 +154,22 @@ def test_generation_heartbeat_updates_running_run(monkeypatch):
     assert "query" in calls
     assert "commit" in calls
     assert "close" in calls
+
+
+def test_unexpected_generation_failure_is_persisted(monkeypatch):
+    profile = create_profile()
+
+    class ExplodingProvider:
+        name = "fake"
+
+        def generate(self, *, prompt, system_message, model):
+            raise RuntimeError("unexpected provider failure")
+
+    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: ExplodingProvider())
+    response = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
+    assert response.status_code == 502
+
+    contents = client.get(f"/content/contents?workspace_id={profile['workspace_id']}", headers=HEADERS)
+    generated = next(item for item in contents.json() if item["title"] == "AI generation in progress")
+    generations = client.get(f"/content/contents/{generated['id']}/generations", headers=HEADERS)
+    assert generations.json()[0]["status"] == "failed"
