@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import HTTPException
 from sqlalchemy import and_, or_, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.app.audit import audit
