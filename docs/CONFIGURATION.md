@@ -26,7 +26,7 @@ Configuration is supplied through .env and passed to the services by Docker Comp
 
 - AI_GENERATION_PROVIDER selects the backend generation provider.
 - AI_TRANSFORMATION_PROVIDER selects the channel transformation provider.
-- GENERATION_LEASE_TIMEOUT_SECONDS controls recovery of abandoned generation runs. The runtime clamps this value to 60 seconds through 24 hours; default is 900 seconds.
+- GENERATION_LEASE_TIMEOUT_SECONDS controls recovery of abandoned generation runs. The runtime clamps this value to 60 seconds through 24 hours; default is 900 seconds. Active generation runs heartbeat from a separate DB session while the provider call is in progress.
 - The current production implementation uses OpenAI. Provider selection is application-owned; Telegram does not call the AI SDK for autonomous generation.
 
 ## Scheduling and publication
