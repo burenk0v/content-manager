@@ -44,4 +44,4 @@ Configuration is supplied through .env and passed to the services by Docker Comp
 
 Use unique, high-entropy values for all application secrets and the service token. Restrict access to the Web UI and never expose the Docker socket to unrelated workloads. Rotate credentials if they are disclosed.
 
-The frontend does not receive the host Docker socket directly. Compose places a restricted Docker socket proxy between the frontend and Docker; the proxy permits container inspection and restart operations only. The proxy still has access to the host socket, so keep the deployment host trusted.
+The frontend receives only read-only Docker API access for status inspection; it cannot restart containers or create/modify/remove Docker resources.

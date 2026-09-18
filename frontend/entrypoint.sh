@@ -23,9 +23,4 @@ elif not user.is_superuser:
 EOF
 fi
 
-mkdir -p /certs
-if [ ! -f /certs/localhost.crt ] || [ ! -f /certs/localhost.key ]; then
-    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes         -keyout /certs/localhost.key -out /certs/localhost.crt         -subj '/CN=localhost' >/dev/null 2>&1
-fi
-
-exec uvicorn mysite.asgi:application --app-dir src --host 0.0.0.0 --port 8443     --ssl-keyfile /certs/localhost.key --ssl-certfile /certs/localhost.crt
+exec uvicorn mysite.asgi:application --app-dir src --host 0.0.0.0 --port 8000
