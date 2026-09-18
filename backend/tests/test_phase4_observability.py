@@ -83,14 +83,14 @@ def test_auth_secret_is_generated_in_development(monkeypatch):
 def test_public_registration_is_disabled_in_production(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("REGISTRATION_ENABLED", raising=False)
-    response = client.post("/auth/register", json={"username": "blocked", "password": "secret123"})
+    response = client.post("/auth/register", json={"username": "blocked", "password": "x"})
     assert response.status_code == 403
 
 
 def test_public_registration_can_be_enabled_explicitly(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("REGISTRATION_ENABLED", "true")
-    response = client.post("/auth/register", json={"username": "enabled-test-user", "password": "test-pass"})
+    response = client.post("/auth/register", json={"username": "enabled-test-user", "password": "x"})
     assert response.status_code == 200
     assert response.json()["username"] == "enabled-test-user"
 
