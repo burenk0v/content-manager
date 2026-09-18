@@ -27,6 +27,7 @@ class FakeResponse:
 
 @pytest.mark.asyncio
 async def test_autonomous_generation_reaches_telegram_review(monkeypatch):
+    monkeypatch.setattr("scheduler.CALLBACK_SECRET", "test-secret")
     bot = FakeBot()
     profile = {
         "id": 7,
