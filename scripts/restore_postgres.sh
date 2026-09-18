@@ -11,12 +11,7 @@ echo "WARNING: this replaces the current PostgreSQL application data."
 read -r -p "Type RESTORE to continue: " confirmation
 [[ "$confirmation" == "RESTORE" ]]
 
-docker compose exec -T database pg_restore \
-  --clean \
-  --if-exists \
-  --no-owner \
-  --no-acl \
-  --username="${DB_USER:-content_manager}" \
-  --dbname="${DB_NAME:-content_manager}" < "$dump"
+docker compose exec -T database sh -c \
+  'pg_restore --clean --if-exists --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$dump"
 
 echo "PostgreSQL restore completed. Verify docker compose ps and /health/ready before resuming workers."
