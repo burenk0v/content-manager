@@ -16,7 +16,7 @@ docker compose exec -T database pg_restore \
   --if-exists \
   --no-owner \
   --no-acl \
-  --username="$${DB_USER:-content_manager}" \
-  --dbname="$${DB_NAME:-content_manager}" < "$dump"
+  --username="${DB_USER:-content_manager}" \
+  --dbname="${DB_NAME:-content_manager}" < "$dump"
 
 echo "PostgreSQL restore completed. Verify docker compose ps and /health/ready before resuming workers."
