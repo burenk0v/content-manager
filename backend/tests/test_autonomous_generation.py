@@ -199,6 +199,13 @@ def test_autonomous_generation_approval_publication_flow(monkeypatch):
     assert generated.status_code == 201
     run = generated.json()
 
+    to_review = client.post(
+        f"/content/contents/{run['content_id']}/transition",
+        json={"status": "review"},
+        headers=HEADERS,
+    )
+    assert to_review.status_code == 200
+
     approved = client.post(
         f"/content/contents/{run['content_id']}/approve-and-schedule",
         json={"content_id": run["content_id"], "channel_id": profile["channel_id"]},
