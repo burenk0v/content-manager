@@ -19,5 +19,5 @@ jobs:
           python-version: "3.13"
       - run: pip install -r src/requirements.txt
       - run: python -m compileall -q src
-      - run: DJANGO_DEBUG=false FRONTEND_SECRET_KEY=ci-secret ADMIN_USERNAME=admin ADMIN_PASSWORD=ci-password ADMIN_EMAIL=admin@example.com python src/manage.py check
+      - run: DB_NAME=ci DB_USER=ci DB_PASSWORD=ci DJANGO_DEBUG=false FRONTEND_SECRET_KEY=ci-secret ADMIN_USERNAME=admin ADMIN_PASSWORD=ci-password ADMIN_EMAIL=admin@example.com python src/manage.py check
       - run: docker build -t content-manager-frontend:ci .
