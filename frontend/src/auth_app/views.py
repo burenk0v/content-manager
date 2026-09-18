@@ -103,7 +103,9 @@ def get_backend_health():
 def _docker_client():
     if docker is None:
         raise RuntimeError('Docker SDK is not installed')
-    docker_host = os.environ.get('DOCKER_HOST', 'unix:///var/run/docker.sock')
+    docker_host = os.environ.get('DOCKER_HOST')
+    if not docker_host:
+        raise RuntimeError('DOCKER_HOST is required for Docker management')
     return docker.DockerClient(base_url=docker_host)
 
 
