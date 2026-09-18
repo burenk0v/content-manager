@@ -5,10 +5,11 @@ import uuid
 
 from fastapi import HTTPException
 from sqlalchemy import and_, or_, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.app.audit import audit
-from src.app.models import Content, Publication
+from src.app.models import Channel, Content, Publication, PublicationOperation
 from src.app.observability import publication_event
 from src.app.publication_state import sync_content_status
 
@@ -359,4 +360,87 @@ def reconcile_unknown(
     db.commit()
     db.refresh(publication)
     publication_event(event_name, publication.id, status=publication.status, attempt_count=publication.attempt_count, error=publication.error_message)
+    return publication
+
+
+def approve_and_schedule(
+    db: Session,
+    content_id: int,
+    channel_id: int,
+    scheduled_at: datetime | None = None,
+    idempotency_key: str | None = None,
+) -> Publication:
+    content = db.query(Content).filter(Content.id == content_id).with_for_update().first()
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not content:
+        raise HTTPException(404, "Content not found")
+    if not channel:
+        raise HTTPException(404, "Channel not found")
+    if content.workspace_id != channel.workspace_id:
+        raise HTTPException(400, "Content and channel must belong to the same workspace")
+
+    key = idempotency_key or f"content:{content.id}:channel:{channel.id}:scheduled:{scheduled_at or 'now'}"
+    existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
+    if existing:
+        return existing
+    existing_for_content = db.query(Publication).filter(
+        Publication.content_id == content.id,
+        Publication.channel_id == channel.id,
+    ).first()
+    if existing_for_content:
+        return existing_for_content
+
+    approval_from = content.status
+    if content.status == "review":
+        from src.app.domain.content_state_machine import transition
+        transition(content.status, "approved")
+        content.status = "approved"
+    if content.status != "approved":
+        raise HTTPException(409, "Content must be in review or approved state")
+
+    publication = Publication(
+        content_id=content.id,
+        content_version_id=content.current_version.id,
+        channel_id=channel.id,
+        scheduled_at=scheduled_at,
+        idempotency_key=key,
+        status="scheduled",
+    )
+    db.add(publication)
+    try:
+        db.flush()
+        db.add(PublicationOperation(
+            publication_id=publication.id,
+            provider=channel.platform.strip().lower(),
+            operation_key=f"publication:{uuid.uuid4().hex}",
+            status="pending",
+        ))
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(Publication).filter(
+            Publication.content_id == content.id,
+            Publication.channel_id == channel.id,
+        ).first()
+        if existing:
+            return existing
+        raise
+
+    from src.app.domain.content_state_machine import transition
+    transition("approved", "scheduled")
+    content.status = "scheduled"
+    content.updated_at = datetime.utcnow()
+    audit(
+        db, content.workspace_id, "content", content.id, "status_changed",
+        event_type="content.status_changed",
+        metadata={"from": approval_from, "to": "scheduled", "approval": True},
+    )
+    audit(
+        db, content.workspace_id, "publication", publication.id, "scheduled",
+        event_type="publication.scheduled",
+        metadata={"channel_id": channel.id, "content_version_id": publication.content_version_id, "atomic_approval": True},
+    )
+    db.commit()
+    db.refresh(publication)
+    publication_event("scheduled", publication.id, status=publication.status, attempt_count=publication.attempt_count)
     return publication

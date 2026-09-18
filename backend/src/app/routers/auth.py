@@ -68,6 +68,9 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
 
 @router.post("/register")
 def register(payload: LoginIn, db: Session = Depends(get_db)):
+    registration_enabled = os.getenv("REGISTRATION_ENABLED", os.getenv("APP_ENV", "development").lower() not in {"production", "prod"})
+    if str(registration_enabled).lower() not in {"1", "true", "yes", "on"}:
+        raise HTTPException(status_code=403, detail="Public registration is disabled")
     existing = db.query(User).filter(User.username == payload.username).first()
     if existing:
         raise HTTPException(status_code=400, detail="User already exists")

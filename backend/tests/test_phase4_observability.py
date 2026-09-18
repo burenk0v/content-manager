@@ -78,3 +78,28 @@ def test_auth_secret_is_generated_in_development(monkeypatch):
     assert first
     assert second
     assert first != second
+
+
+def test_public_registration_is_disabled_in_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("REGISTRATION_ENABLED", raising=False)
+    response = client.post("/auth/register", json={"username": "blocked", "password": "x"})
+    assert response.status_code == 403
+
+
+def test_public_registration_can_be_enabled_explicitly(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("REGISTRATION_ENABLED", "true")
+    response = client.post("/auth/register", json={"username": "enabled-test-user", "password": "x"})
+    assert response.status_code == 200
+    assert response.json()["username"] == "enabled-test-user"
+
+
+def test_publication_worker_token_is_separate_from_service_token(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SERVICE_ACCOUNT_TOKEN", "general-secret")
+    monkeypatch.setenv("PUBLICATION_WORKER_TOKEN", "publication-secret")
+    response = client.get("/content/publications/ready", headers={"X-Service-Token": "general-secret"})
+    assert response.status_code == 401
+    response = client.get("/content/publications/ready", headers={"X-Service-Token": "publication-secret"})
+    assert response.status_code == 200

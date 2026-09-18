@@ -156,10 +156,20 @@ class PublicationReconciliation(BaseModel):
     error_message: Optional[str] = Field(None, min_length=1, max_length=4000)
 
 
-def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
-    expected = os.environ.get("SERVICE_ACCOUNT_TOKEN")
+def _require_token(x_service_token: Optional[str], expected: Optional[str]) -> None:
     if not expected or not x_service_token or not hmac.compare_digest(x_service_token, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
+
+
+def require_service_token(x_service_token: Optional[str] = Header(None)) -> None:
+    _require_token(x_service_token, os.environ.get("SERVICE_ACCOUNT_TOKEN"))
+
+
+def require_publication_worker_token(x_service_token: Optional[str] = Header(None)) -> None:
+    expected = os.environ.get("PUBLICATION_WORKER_TOKEN")
+    if not expected and os.environ.get("APP_ENV", "development").lower() not in {"production", "prod"}:
+        expected = os.environ.get("SERVICE_ACCOUNT_TOKEN")
+    _require_token(x_service_token, expected)
 
 
 def publication_out(publication: Publication) -> PublicationOut:
@@ -363,86 +373,18 @@ def approve_and_schedule_content(content_id: int, payload: PublicationCreate, db
     """Atomically approve content and create its publication."""
     if payload.content_id != content_id:
         raise HTTPException(400, "content_id does not match the path")
-    content = db.query(Content).filter(Content.id == content_id).with_for_update().first()
-    channel = db.query(Channel).filter(Channel.id == payload.channel_id).first()
-    if not content:
-        raise HTTPException(404, "Content not found")
-    if not channel:
-        raise HTTPException(404, "Channel not found")
-    if content.workspace_id != channel.workspace_id:
-        raise HTTPException(400, "Content and channel must belong to the same workspace")
-
-    key = payload.idempotency_key or f"content:{content.id}:channel:{channel.id}:scheduled:{payload.scheduled_at or 'now'}"
-    existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
-    if existing:
-        return publication_out(existing)
-    existing_for_content = db.query(Publication).filter(
-        Publication.content_id == content.id,
-        Publication.channel_id == channel.id,
-    ).first()
-    if existing_for_content:
-        return publication_out(existing_for_content)
-
-    if content.status == "review":
-        transition(content.status, "approved")
-        content.status = "approved"
-    if content.status != "approved":
-        raise HTTPException(409, "Content must be in review or approved state")
-    publication = Publication(
-        content_id=content.id,
-        content_version_id=content.current_version.id,
-        channel_id=channel.id,
-        scheduled_at=payload.scheduled_at,
-        idempotency_key=key,
-        status="scheduled",
+    return publication_out(
+        publication_service.approve_and_schedule(
+            db,
+            content_id=content_id,
+            channel_id=payload.channel_id,
+            scheduled_at=payload.scheduled_at,
+            idempotency_key=payload.idempotency_key,
+        )
     )
-    db.add(publication)
-    try:
-        db.flush()
-        db.add(PublicationOperation(
-            publication_id=publication.id,
-            provider=channel.platform.strip().lower(),
-            operation_key=f"publication:{uuid.uuid4().hex}",
-            status="pending",
-        ))
-        db.flush()
-    except IntegrityError:
-        db.rollback()
-        existing = db.query(Publication).filter(
-            Publication.content_id == content.id,
-            Publication.channel_id == channel.id,
-        ).first()
-        if existing:
-            return publication_out(existing)
-        raise
-    transition("approved", "scheduled")
-    content.status = "scheduled"
-    content.updated_at = datetime.utcnow()
-    audit(
-        db,
-        content.workspace_id,
-        "content",
-        content.id,
-        "status_changed",
-        event_type="content.status_changed",
-        metadata={"from": "review", "to": "scheduled", "approval": True},
-    )
-    audit(
-        db,
-        content.workspace_id,
-        "publication",
-        publication.id,
-        "scheduled",
-        event_type="publication.scheduled",
-        metadata={"channel_id": channel.id, "content_version_id": publication.content_version_id, "atomic_approval": True},
-    )
-    db.commit()
-    db.refresh(publication)
-    publication_event("scheduled", publication.id, status=publication.status, attempt_count=publication.attempt_count)
-    return publication_out(publication)
 
 
-@router.get("/publications/ready", response_model=List[PublicationReadyOut], dependencies=[Depends(require_service_token)])
+@router.get("/publications/ready", response_model=List[PublicationReadyOut], dependencies=[Depends(require_publication_worker_token)])
 def list_ready_publications(limit: int = 20, db: Session = Depends(get_db)):
     from sqlalchemy import or_
     now = datetime.utcnow()
@@ -450,7 +392,7 @@ def list_ready_publications(limit: int = 20, db: Session = Depends(get_db)):
     return [publication_ready_out(item) for item in query.all()]
 
 
-@router.get("/publications/unknown", response_model=List[PublicationUnknownOut], dependencies=[Depends(require_service_token)])
+@router.get("/publications/unknown", response_model=List[PublicationUnknownOut], dependencies=[Depends(require_publication_worker_token)])
 def list_unknown_publications(limit: int = 20, db: Session = Depends(get_db)):
     query = db.query(Publication).join(PublicationOperation).join(Channel).filter(Publication.status == "failed", PublicationOperation.status == "unknown", Channel.is_active.is_(True)).order_by(Publication.id.asc()).limit(max(1, min(limit, 100)))
     return [publication_unknown_out(item) for item in query.all()]
@@ -464,31 +406,31 @@ def list_publications(workspace_id: Optional[int] = None, db: Session = Depends(
     return [publication_out(item) for item in query.order_by(Publication.scheduled_at.asc(), Publication.id.asc()).all()]
 
 
-@router.post("/publications/recover-stale", response_model=List[PublicationOut], dependencies=[Depends(require_service_token)])
+@router.post("/publications/recover-stale", response_model=List[PublicationOut], dependencies=[Depends(require_publication_worker_token)])
 def recover_stale_publications(db: Session = Depends(get_db)):
     return [publication_out(item) for item in publication_service.recover_stale(db)]
 
 
-@router.post("/publications/{publication_id}/claim", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/claim", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def claim_publication(publication_id: int, payload: PublicationClaim, db: Session = Depends(get_db)):
     return publication_out(publication_service.claim(db, publication_id, payload.worker_id))
 
 
-@router.post("/publications/{publication_id}/heartbeat", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/heartbeat", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def heartbeat_publication(publication_id: int, payload: PublicationLease, db: Session = Depends(get_db)):
     return publication_out(publication_service.heartbeat(db, publication_id, payload.worker_id, payload.processing_token))
 
 
-@router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/complete", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def complete_publication(publication_id: int, payload: PublicationComplete, db: Session = Depends(get_db)):
     return publication_out(publication_service.complete(db, publication_id, payload.worker_id, payload.processing_token, payload.external_id))
 
 
-@router.post("/publications/{publication_id}/fail", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/fail", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def fail_publication(publication_id: int, payload: PublicationFail, db: Session = Depends(get_db)):
     return publication_out(publication_service.fail(db, publication_id, payload.worker_id, payload.processing_token, payload.error_message, payload.retry))
 
 
-@router.post("/publications/{publication_id}/reconcile", response_model=PublicationOut, dependencies=[Depends(require_service_token)])
+@router.post("/publications/{publication_id}/reconcile", response_model=PublicationOut, dependencies=[Depends(require_publication_worker_token)])
 def reconcile_publication(publication_id: int, payload: PublicationReconciliation, db: Session = Depends(get_db)):
     return publication_out(publication_service.reconcile_unknown(db, publication_id, payload.outcome, payload.external_id, payload.error_message))

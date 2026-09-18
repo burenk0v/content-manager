@@ -86,7 +86,7 @@ def bulk_transition(
     actor_user_id: int | None = None,
 ) -> list[dict]:
     ids = [content_id for content_id, _ in items]
-    contents = {content.id: content for content in db.query(Content).filter(Content.id.in_(ids)).all()}
+    contents = {content.id: content for content in db.query(Content).filter(Content.id.in_(ids)).with_for_update().all()}
     missing = [content_id for content_id in ids if content_id not in contents]
     if missing:
         raise ContentNotFound(missing[0])
