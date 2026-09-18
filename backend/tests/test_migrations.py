@@ -133,7 +133,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
 
     with engine.connect() as connection:
         version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-    assert version == "0007_generation_run_lease"
+    assert version == "0008_generation_run_active_guard"
 
 
 def test_alembic_can_downgrade_fresh_schema_to_base(tmp_path):
