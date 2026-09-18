@@ -110,3 +110,48 @@ def test_autonomous_profile_generation_records_provider_failure(monkeypatch):
     assert generations.status_code == 200
     assert generations.json()[0]["status"] == "failed"
     assert generations.json()[0]["error_message"] == "provider unavailable"
+
+
+def test_generation_heartbeat_updates_running_run(monkeypatch):
+    import threading
+    import time
+
+    from src.app.services import generation_service
+
+    calls = []
+
+    class FakeQuery:
+        def filter(self, *args):
+            return self
+
+        def first(self):
+            calls.append("query")
+            return type("Run", (), {"lease_heartbeat_at": None})()
+
+    class FakeSession:
+        def query(self, *args):
+            return FakeQuery()
+
+        def commit(self):
+            calls.append("commit")
+
+        def rollback(self):
+            calls.append("rollback")
+
+        def close(self):
+            calls.append("close")
+
+    monkeypatch.setattr(generation_service, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(generation_service, "_generation_heartbeat_interval_seconds", lambda: 0.01)
+
+    stop = threading.Event()
+    generation_service._heartbeat_generation(123, stop) if False else None
+    worker = threading.Thread(target=generation_service._heartbeat_generation, args=(123, stop))
+    worker.start()
+    time.sleep(0.03)
+    stop.set()
+    worker.join(timeout=1)
+
+    assert "query" in calls
+    assert "commit" in calls
+    assert "close" in calls
