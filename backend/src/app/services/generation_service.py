@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import os
+import threading
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+from src.app.db import SessionLocal
 
 from src.app.ai_generation import GenerationError, get_generation_provider
 from src.app.audit import audit
@@ -37,6 +40,28 @@ def generation_lease_timeout_seconds() -> int:
         value = DEFAULT_GENERATION_LEASE_TIMEOUT_SECONDS
     return max(MIN_GENERATION_LEASE_TIMEOUT_SECONDS, min(value, MAX_GENERATION_LEASE_TIMEOUT_SECONDS))
 
+
+def _generation_heartbeat_interval_seconds() -> float:
+    return max(5.0, min(generation_lease_timeout_seconds() / 3.0, 60.0))
+
+
+def _heartbeat_generation(run_id: int, stop_event: threading.Event) -> None:
+    interval = _generation_heartbeat_interval_seconds()
+    while not stop_event.wait(interval):
+        heartbeat_db = SessionLocal()
+        try:
+            run = heartbeat_db.query(GenerationRun).filter(
+                GenerationRun.id == run_id,
+                GenerationRun.status == "running",
+            ).first()
+            if run is None:
+                return
+            run.lease_heartbeat_at = datetime.utcnow()
+            heartbeat_db.commit()
+        except Exception:
+            heartbeat_db.rollback()
+        finally:
+            heartbeat_db.close()
 
 def recover_stale_generations(db: Session) -> list[GenerationRun]:
     now = datetime.utcnow()
@@ -112,18 +137,30 @@ def generate_content(
         db.rollback()
         raise GenerationConflict("Content already has a generation run in progress") from exc
 
+    heartbeat_stop = threading.Event()
+    heartbeat_thread: threading.Thread | None = None
     try:
         provider = get_generation_provider()
-        run.lease_heartbeat_at = datetime.utcnow()
         provider_name = provider.name
         run.provider = provider_name
+        run.lease_heartbeat_at = datetime.utcnow()
+        db.commit()
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat_generation,
+            args=(run.id, heartbeat_stop),
+            name=f"generation-heartbeat-{run.id}",
+            daemon=True,
+        )
+        heartbeat_thread.start()
         generated = provider.generate(prompt=prompt, system_message=system_message, model=model)
         if transform_generated is not None:
             generated = transform_generated(generated)
     except (GenerationError, GenerationProviderFailure) as exc:
+        run = db.query(GenerationRun).filter(GenerationRun.id == run.id).first() or run
         run.status = "failed"
         run.error_message = str(exc)
         run.completed_at = datetime.utcnow()
+        run.lease_heartbeat_at = None
         audit(
             db,
             content.workspace_id,
@@ -134,6 +171,10 @@ def generate_content(
             metadata={"provider": run.provider, "model": run.model},
         )
         raise GenerationProviderFailure(str(exc)) from exc
+    finally:
+        heartbeat_stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=2.0)
 
     version = ContentVersion(
         content_id=content.id,
