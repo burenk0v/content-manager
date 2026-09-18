@@ -12,7 +12,7 @@ from providers.base import AmbiguousPublicationError, PermanentPublicationError,
 from providers.registry import UnsupportedPublisherError, UnsupportedReconcilerError
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
-SERVICE_TOKEN = os.getenv("PUBLICATION_WORKER_TOKEN") or os.getenv("SERVICE_ACCOUNT_TOKEN")
+SERVICE_TOKEN = os.getenv("PUBLICATION_WORKER_TOKEN")
 WORKER_ID = os.getenv("PUBLICATION_WORKER_ID") or f"telegram:{socket.gethostname()}"
 POLL_INTERVAL_SECONDS = int(os.getenv("PUBLICATION_POLL_INTERVAL_SECONDS", "5"))
 LEASE_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("PUBLICATION_LEASE_HEARTBEAT_INTERVAL_SECONDS", "60"))
