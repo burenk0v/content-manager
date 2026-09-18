@@ -53,7 +53,7 @@ This system provides:
 
 #### Frontend (Django)
 
-- **Port**: 8443 (HTTPS)
+- **Port**: 8000 (plain HTTP inside the deployment; terminate public HTTPS at a reverse proxy)
 - **Pages**:
   - Dashboard — backend and database health overview
   - Dashboard — Docker container statuses (read-only)
@@ -104,7 +104,8 @@ Required configuration:
 | `PUBLICATION_WORKER_TOKEN` | — | Dedicated authentication token for publication worker endpoints |
 | `FRONTEND_SECRET_KEY` | — | Django frontend secret key |
 | `BOT_TOKEN` | — | Used as initial value for per-user UI Telegram settings |
-| `ADMINS` | — | Used as initial value for per-user UI Telegram settings |
+| `ADMINS` | — | Telegram administrator IDs |
+| `TELEGRAM_CALLBACK_SECRET` | — | HMAC secret used to authenticate Telegram approval actions |
 | `OPENAI_API_KEY` | — | OpenAI API key for backend AI generation and transformation |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model for backend AI generation and transformation |
 | `AI_GENERATION_PROVIDER` | `openai` | Backend generation provider |
