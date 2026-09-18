@@ -13,10 +13,9 @@ DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() == "true"
 
 ALLOWED_HOSTS = ["0.0.0.0", "localhost", "frontend", os.getenv("FRONTEND_HOST", "127.0.0.1"), socket.gethostname()]
 FRONTEND_PUBLIC_URL = os.getenv("FRONTEND_PUBLIC_URL", "").strip().rstrip("/")
-CSRF_TRUSTED_ORIGINS = [FRONTEND_PUBLIC_URL] if FRONTEND_PUBLIC_URL else [
-    "https://localhost:8443", "https://frontend:8443",
-    f'https://{os.getenv("FRONTEND_HOST", "127.0.0.1")}:8443',
-]
+CSRF_TRUSTED_ORIGINS = [FRONTEND_PUBLIC_URL] if FRONTEND_PUBLIC_URL else []
+if FRONTEND_PUBLIC_URL.startswith("https://"):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
