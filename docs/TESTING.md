@@ -11,7 +11,7 @@ pip install -r src/requirements.txt
 pytest -q
 ~~~
 
-Migration tests bootstrap an empty SQLite database to the current Alembic head and verify the resulting schema and indexes.
+Migration tests bootstrap a fresh PostgreSQL database to the current Alembic head and verify the resulting schema and indexes.
 
 ## Frontend and Telegram
 
