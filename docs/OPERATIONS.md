@@ -23,8 +23,8 @@ docker compose logs --tail=200 frontend
 Back up PostgreSQL before upgrades and on a regular schedule. The repository includes scripts that use the running Compose database container:
 
 ~~~bash
-./scripts/backup_postgres.sh
-./scripts/restore_postgres.sh backups/content-manager-YYYYMMDD-HHMMSS.dump
+bash scripts/backup_postgres.sh
+bash scripts/restore_postgres.sh backups/content-manager-YYYYMMDD-HHMMSS.dump
 ~~~
 
 Backups are custom-format PostgreSQL dumps. Store them outside the deployment host as well; a Docker volume is not a backup.
