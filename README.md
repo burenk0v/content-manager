@@ -56,7 +56,7 @@ This system provides:
 - **Port**: 8443 (HTTPS)
 - **Pages**:
   - Dashboard — backend and database health overview
-  - Dashboard — Docker container statuses and restart actions
+  - Dashboard — Docker container statuses (read-only)
   - Topics — view and delete AI-generated topics
   - Schedules — create, edit, delete publication schedules
   - Drafts — manage content drafts
