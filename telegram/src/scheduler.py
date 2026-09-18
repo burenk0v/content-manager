@@ -368,13 +368,7 @@ async def retry_pending_notifications(bot: Bot, admins: list[int]) -> None:
             f"<b>Topic:</b> {escape(str(item.get('title') or 'Untitled'))}\n"
             f"<b>Language:</b> {escape(str(item.get('language') or profile.get('language') or 'en'))}\n\n{body}"
         )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Approve", callback_data=f"approve:{item['id']}:{profile['id']}"),
-                InlineKeyboardButton(text="Reject", callback_data=f"reject:{item['id']}"),
-            ],
-            [InlineKeyboardButton(text="Regenerate", callback_data=f"regenerate:{profile['id']}:{item['id']}")],
-        ])
+        keyboard = approval_keyboard(int(item["id"]), int(profile["id"]))
         if await send_admin_message(bot, payload, admins, keyboard):
             await complete_notification(int(item["id"]))
 
