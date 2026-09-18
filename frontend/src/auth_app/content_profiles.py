@@ -73,6 +73,42 @@ def content_profiles_view(request):
     if request.method == 'POST':
         action = request.POST.get('action')
         try:
+            if action == 'create_workspace':
+                name = request.POST.get('workspace_name', '').strip()
+                slug = request.POST.get('workspace_slug', '').strip().lower()
+                if not name or not slug:
+                    messages.error(request, 'Workspace name and slug are required.')
+                    return redirect('auth_app:content_profiles')
+                response = backend_request('post', '/content/workspaces', json={'name': name, 'slug': slug})
+                if response.status_code == 201:
+                    workspace = response.json()
+                    messages.success(request, f'Workspace "{workspace["name"]}" created.')
+                    return redirect(f'{request.path}?workspace_id={workspace["id"]}')
+                messages.error(request, _detail(response, 'Unable to create workspace.'))
+                return redirect('auth_app:content_profiles')
+
+            if action == 'create_channel':
+                workspace_id = request.POST.get('channel_workspace_id', '').strip()
+                platform = request.POST.get('platform', 'telegram').strip().lower()
+                external_id = request.POST.get('external_id', '').strip()
+                name = request.POST.get('channel_name', '').strip()
+                timezone = request.POST.get('channel_timezone', 'UTC').strip()
+                if not workspace_id.isdigit() or not external_id:
+                    messages.error(request, 'Workspace and channel ID are required.')
+                    return redirect('auth_app:content_profiles')
+                response = backend_request('post', '/content/channels', json={
+                    'workspace_id': int(workspace_id),
+                    'platform': platform,
+                    'external_id': external_id,
+                    'name': name or None,
+                    'timezone': timezone,
+                })
+                if response.status_code == 201:
+                    messages.success(request, 'Channel created.')
+                    return redirect(f'{request.path}?workspace_id={workspace_id}')
+                messages.error(request, _detail(response, 'Unable to create channel.'))
+                return redirect('auth_app:content_profiles')
+
             if action == 'delete':
                 profile_id = request.POST.get('profile_id', '').strip()
                 response = backend_request('delete', f'/content/profiles/{profile_id}')
