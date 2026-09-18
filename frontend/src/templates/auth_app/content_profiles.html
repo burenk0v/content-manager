@@ -25,6 +25,49 @@
     {% endif %}
 
     <div class="card">
+        <h2>First-run setup</h2>
+        <p class="muted">Create the workspace and Telegram channel that the autonomous profile will use. You only need to do this once.</p>
+        <div class="grid">
+            <div>
+                <h3>1. Workspace</h3>
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="create_workspace">
+                    <label>Name</label>
+                    <input name="workspace_name" required maxlength="200" placeholder="My content">
+                    <label>Slug</label>
+                    <input name="workspace_slug" required maxlength="100" pattern="[A-Za-z0-9_-]+" placeholder="my-content">
+                    <button type="submit">Create workspace</button>
+                </form>
+            </div>
+            <div>
+                <h3>2. Telegram channel</h3>
+                <form method="post">
+                    {% csrf_token %}
+                    <label>Workspace</label>
+                    <select name="channel_workspace_id" required>
+                        <option value="">Select workspace</option>
+                        {% for workspace in workspaces %}
+                            <option value="{{ workspace.id }}" {% if request.GET.workspace_id == workspace.id|stringformat:'s' %}selected{% endif %}>{{ workspace.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <label>Channel ID</label>
+                    <input name="external_id" required maxlength="255" placeholder="@my_channel or -1001234567890">
+                    <label>Channel name</label>
+                    <input name="channel_name" maxlength="200" placeholder="My Telegram channel">
+                    <label>Timezone</label>
+                    <select name="channel_timezone">
+                        {% for value,label in timezone_options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                    </select>
+                    <input type="hidden" name="platform" value="telegram">
+                    <button type="submit" {% if not workspaces %}disabled{% endif %}>Create channel</button>
+                </form>
+                {% if not workspaces %}<p class="muted">Create a workspace first.</p>{% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
         <h2>{% if edit_profile %}Edit profile{% else %}Create profile{% endif %}</h2>
         <form method="post">
             {% csrf_token %}
@@ -33,7 +76,7 @@
             <div class="grid">
                 <div>
                     <label>Workspace</label>
-                    <select name="workspace_id" required onchange="this.form.submit()">
+                    <select name="workspace_id" required >
                         <option value="">Select workspace</option>
                         {% for workspace in workspaces %}
                             <option value="{{ workspace.id }}" {% if edit_profile and edit_profile.workspace_id == workspace.id or request.POST.workspace_id == workspace.id|stringformat:'s' or request.GET.workspace_id == workspace.id|stringformat:'s' %}selected{% endif %}>{{ workspace.name }}</option>
