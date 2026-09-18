@@ -103,6 +103,16 @@ async def transition_content(content_id: int, status: str) -> dict[str, Any]:
     return response.json()
 
 
+async def approve_and_schedule_content(content_id: int, channel_id: int) -> dict[str, Any]:
+    response = await backend_request(
+        "POST",
+        f"/content/contents/{content_id}/approve-and-schedule",
+        json={"content_id": content_id, "channel_id": channel_id},
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def normalize_topic_name(text: str) -> str:
     return text.strip().strip('"').strip("'")
 
