@@ -32,7 +32,7 @@ def test_generation_blocks_duplicate_running_run(monkeypatch):
 def test_stale_generation_recovery_requeues_profile(monkeypatch):
     from tests.test_autonomous_generation import create_profile
     profile = create_profile()
-    db = SessionLocal()
+    db = TestingSession()
     try:
         content = Content(workspace_id=profile["workspace_id"], profile_id=profile["id"], title="stale", language="en", status="draft")
         db.add(content)
