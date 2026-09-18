@@ -1,6 +1,6 @@
 # Self-hosting
 
-Content Manager runs as a small Docker Compose deployment: PostgreSQL, Backend, Frontend, Telegram, and a restricted Docker socket proxy used only by the dashboard container-management controls.
+Content Manager runs as a small Docker Compose deployment: PostgreSQL, Backend, Frontend, and Telegram.
 
 ## 1. Configure
 
@@ -36,27 +36,20 @@ Approve, reject, or regenerate directly from the Telegram message.
 
 ## 5. Upgrades and backups
 
-Back up PostgreSQL before upgrades. Database schema changes are managed only by Alembic; application startup does not call `create_all()`.
+Back up PostgreSQL before upgrades. Use `./scripts/backup_postgres.sh` and keep at least one copy outside the deployment host.
 
 For an upgrade: back up the database, pull the new version, run `docker compose up -d --build`, verify `/health/ready` and `docker compose ps`, then inspect Telegram `/status`.
 
+To restore a dump, stop application writers first, then run `./scripts/restore_postgres.sh <dump>` and verify readiness before resuming workers.
 
 ## Public HTTPS / Telegram WebApp
 
-The frontend container listens on HTTPS internally on port 8443 and is bound to
-`127.0.0.1:3000` by the default Compose file. For a real Telegram WebApp,
-place a reverse proxy in front of it and expose a valid public TLS certificate.
+The frontend container serves plain HTTP through Uvicorn on port 8000 and is bound to `127.0.0.1:3000` by the default Compose file. For a real Telegram WebApp, place a reverse proxy in front of it and terminate TLS there with a certificate valid for the public hostname.
 
-Set both `WEBAPP_URL` and `FRONTEND_PUBLIC_URL` to the same public HTTPS origin,
-for example `https://content.example.com`. The reverse proxy should forward that
-origin to `https://127.0.0.1:3000`.
+Set both WEBAPP_URL and FRONTEND_PUBLIC_URL to the same public HTTPS origin, for example `https://content.example.com`. The reverse proxy should forward that origin to `http://127.0.0.1:3000`.
 
-The frontend uses a restricted Docker socket proxy for its container status/restart UI instead of mounting the host socket directly. The proxy still has host Docker access, so keep the deployment host trusted. Keep the management interface behind trusted network controls and do not expose
-the Docker socket to unrelated containers.
+The frontend no longer has Docker write access. The Docker socket proxy is read-only at the API level and is used only for container status inspection. Keep the management interface behind trusted network controls and do not expose the Docker socket to unrelated containers.
 
 ## Approval notification recovery
 
-Approval notifications are persisted as part of the content lifecycle. If the
-Telegram send fails or the Telegram service restarts, review items remain pending
-and the scheduler retries their notification. A notification claim expires after
-five minutes so an interrupted worker can recover it.
+Approval notifications are persisted as part of the content lifecycle. If the Telegram send fails or the Telegram service restarts, review items remain pending and the scheduler retries their notification. A notification claim expires after five minutes so an interrupted worker can recover it.
