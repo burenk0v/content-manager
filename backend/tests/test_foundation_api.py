@@ -74,6 +74,31 @@ def test_publication_requires_approved_content():
     assert response.status_code == 409
 
 
+
+def test_approve_and_schedule_is_atomic_and_idempotent():
+    suffix = uuid.uuid4().hex[:8]
+    workspace = client.post("/content/workspaces", json={"name": f"Atomic {suffix}", "slug": f"atomic-{suffix}"}, headers=HEADERS).json()
+    channel = client.post("/content/channels", json={"workspace_id": workspace["id"], "platform": "telegram", "external_id": f"@atomic_{suffix}"}, headers=HEADERS).json()
+    content = client.post("/content/contents", json={"workspace_id": workspace["id"], "body": "Atomic approval needs enough content.", "language": "en"}, headers=HEADERS).json()
+
+    response = client.post(
+        f"/content/contents/{content['id']}/approve-and-schedule",
+        json={"content_id": content["id"], "channel_id": channel["id"]},
+        headers=HEADERS,
+    )
+    assert response.status_code == 201
+    publication = response.json()
+    assert publication["status"] == "scheduled"
+    assert client.get(f"/content/contents/{content['id']}/transitions", headers=HEADERS).json()["status"] == "scheduled"
+
+    replay = client.post(
+        f"/content/contents/{content['id']}/approve-and-schedule",
+        json={"content_id": content["id"], "channel_id": channel["id"]},
+        headers=HEADERS,
+    )
+    assert replay.status_code == 201
+    assert replay.json()["id"] == publication["id"]
+
 def test_content_lifecycle_and_idempotent_publication():
     publication = create_publication()
     second = client.post("/content/publications", json={"content_id": publication["content_id"], "channel_id": publication["channel_id"], "idempotency_key": publication["idempotency_key"]}, headers=HEADERS)
