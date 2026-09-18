@@ -114,6 +114,7 @@ Required configuration:
 | `PUBLICATION_LEASE_HEARTBEAT_INTERVAL_SECONDS` | `60` | Publication lease heartbeat interval |
 | `PUBLICATION_RECONCILIATION_POLL_INTERVAL_SECONDS` | `30` | Unknown-provider reconciliation polling interval |
 | `PUBLICATION_LEASE_TIMEOUT_SECONDS` | `900` | Backend lease expiry window |
+| `GENERATION_LEASE_TIMEOUT_SECONDS` | `900` | Generation lease expiry window; active runs heartbeat during provider calls |
 | `PUBLICATION_MAX_ATTEMPTS` | `5` | Maximum publication attempts |
 | `PUBLICATION_RETRY_DELAY_SECONDS` | `60` | Initial retry delay; exponential backoff is applied |
 | `PUBLICATION_RETRY_MAX_DELAY_SECONDS` | `3600` | Maximum retry delay |
