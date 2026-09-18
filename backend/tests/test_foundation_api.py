@@ -80,6 +80,8 @@ def test_approve_and_schedule_is_atomic_and_idempotent():
     workspace = client.post("/content/workspaces", json={"name": f"Atomic {suffix}", "slug": f"atomic-{suffix}"}, headers=HEADERS).json()
     channel = client.post("/content/channels", json={"workspace_id": workspace["id"], "platform": "telegram", "external_id": f"@atomic_{suffix}"}, headers=HEADERS).json()
     content = client.post("/content/contents", json={"workspace_id": workspace["id"], "body": "Atomic approval needs enough content.", "language": "en"}, headers=HEADERS).json()
+    to_review = client.post(f"/content/contents/{content['id']}/transition", json={"status": "review"}, headers=HEADERS)
+    assert to_review.status_code == 200
 
     response = client.post(
         f"/content/contents/{content['id']}/approve-and-schedule",
