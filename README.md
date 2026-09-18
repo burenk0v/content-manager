@@ -66,7 +66,7 @@ This system provides:
   - Service-to-backend authentication
   - Schedule timezone conversion
   - Per-user Telegram settings stored in UI database
-  - Docker container status and restart controls
+  - Docker container status (read-only)
 
 #### Telegram Bot (Aiogram)
 
