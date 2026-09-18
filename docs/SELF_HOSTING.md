@@ -1,10 +1,10 @@
 # Self-hosting
 
-Content Manager runs as a small Docker Compose deployment: PostgreSQL, Backend, Frontend, and Telegram.
+Content Manager runs as a small Docker Compose deployment: PostgreSQL, Backend, Frontend, Telegram, and a restricted Docker socket proxy used only by the dashboard container-management controls.
 
 ## 1. Configure
 
-Copy .env.example to .env and replace every CHANGE_ME_* value. Generate long random values for BACKEND_SECRET_KEY, SERVICE_ACCOUNT_TOKEN, and FRONTEND_SECRET_KEY.
+Copy .env.example to .env and replace every CHANGE_ME_* value. Generate long random values for BACKEND_SECRET_KEY, SERVICE_ACCOUNT_TOKEN, PUBLICATION_WORKER_TOKEN, and FRONTEND_SECRET_KEY.
 
 The Telegram bot token and ADMINS are required for the approval console. GENERATION_LEASE_TIMEOUT_SECONDS defaults to 900 seconds and controls stale generation recovery. WEBAPP_URL must be an HTTPS URL reachable by Telegram clients.
 
@@ -51,10 +51,7 @@ Set both `WEBAPP_URL` and `FRONTEND_PUBLIC_URL` to the same public HTTPS origin,
 for example `https://content.example.com`. The reverse proxy should forward that
 origin to `https://127.0.0.1:3000`.
 
-The frontend currently mounts `/var/run/docker.sock` because the self-hosted UI
-uses Docker lifecycle operations. Treat the frontend host/container as privileged:
-a compromise of the frontend process can potentially control Docker on the host.
-Keep the management interface behind trusted network controls and do not expose
+The frontend uses a restricted Docker socket proxy for its container status/restart UI instead of mounting the host socket directly. The proxy still has host Docker access, so keep the deployment host trusted. Keep the management interface behind trusted network controls and do not expose
 the Docker socket to unrelated containers.
 
 ## Approval notification recovery
