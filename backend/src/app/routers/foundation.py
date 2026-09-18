@@ -373,83 +373,15 @@ def approve_and_schedule_content(content_id: int, payload: PublicationCreate, db
     """Atomically approve content and create its publication."""
     if payload.content_id != content_id:
         raise HTTPException(400, "content_id does not match the path")
-    content = db.query(Content).filter(Content.id == content_id).with_for_update().first()
-    channel = db.query(Channel).filter(Channel.id == payload.channel_id).first()
-    if not content:
-        raise HTTPException(404, "Content not found")
-    if not channel:
-        raise HTTPException(404, "Channel not found")
-    if content.workspace_id != channel.workspace_id:
-        raise HTTPException(400, "Content and channel must belong to the same workspace")
-
-    key = payload.idempotency_key or f"content:{content.id}:channel:{channel.id}:scheduled:{payload.scheduled_at or 'now'}"
-    existing = db.query(Publication).filter(Publication.idempotency_key == key).first()
-    if existing:
-        return publication_out(existing)
-    existing_for_content = db.query(Publication).filter(
-        Publication.content_id == content.id,
-        Publication.channel_id == channel.id,
-    ).first()
-    if existing_for_content:
-        return publication_out(existing_for_content)
-
-    if content.status == "review":
-        transition(content.status, "approved")
-        content.status = "approved"
-    if content.status != "approved":
-        raise HTTPException(409, "Content must be in review or approved state")
-    publication = Publication(
-        content_id=content.id,
-        content_version_id=content.current_version.id,
-        channel_id=channel.id,
-        scheduled_at=payload.scheduled_at,
-        idempotency_key=key,
-        status="scheduled",
+    return publication_out(
+        publication_service.approve_and_schedule(
+            db,
+            content_id=content_id,
+            channel_id=payload.channel_id,
+            scheduled_at=payload.scheduled_at,
+            idempotency_key=payload.idempotency_key,
+        )
     )
-    db.add(publication)
-    try:
-        db.flush()
-        db.add(PublicationOperation(
-            publication_id=publication.id,
-            provider=channel.platform.strip().lower(),
-            operation_key=f"publication:{uuid.uuid4().hex}",
-            status="pending",
-        ))
-        db.flush()
-    except IntegrityError:
-        db.rollback()
-        existing = db.query(Publication).filter(
-            Publication.content_id == content.id,
-            Publication.channel_id == channel.id,
-        ).first()
-        if existing:
-            return publication_out(existing)
-        raise
-    transition("approved", "scheduled")
-    content.status = "scheduled"
-    content.updated_at = datetime.utcnow()
-    audit(
-        db,
-        content.workspace_id,
-        "content",
-        content.id,
-        "status_changed",
-        event_type="content.status_changed",
-        metadata={"from": "review", "to": "scheduled", "approval": True},
-    )
-    audit(
-        db,
-        content.workspace_id,
-        "publication",
-        publication.id,
-        "scheduled",
-        event_type="publication.scheduled",
-        metadata={"channel_id": channel.id, "content_version_id": publication.content_version_id, "atomic_approval": True},
-    )
-    db.commit()
-    db.refresh(publication)
-    publication_event("scheduled", publication.id, status=publication.status, attempt_count=publication.attempt_count)
-    return publication_out(publication)
 
 
 @router.get("/publications/ready", response_model=List[PublicationReadyOut], dependencies=[Depends(require_publication_worker_token)])
