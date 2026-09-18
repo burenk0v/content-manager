@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import os
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.app.ai_generation import GenerationError, get_generation_provider
@@ -41,7 +42,9 @@ def recover_stale_generations(db: Session) -> list[GenerationRun]:
     now = datetime.utcnow()
     cutoff = now - timedelta(seconds=generation_lease_timeout_seconds())
     runs = (db.query(GenerationRun)
-        .filter(GenerationRun.status == "running", GenerationRun.created_at < cutoff)
+        .filter(GenerationRun.status == "running",
+            ((GenerationRun.lease_heartbeat_at.is_not(None) & (GenerationRun.lease_heartbeat_at < cutoff)) |
+             (GenerationRun.lease_heartbeat_at.is_(None) & (GenerationRun.created_at < cutoff))))
         .order_by(GenerationRun.id.asc()).all())
     recovered = []
     for run in runs:
@@ -82,7 +85,8 @@ def generate_content(
         .order_by(GenerationRun.id.desc()).first())
     if active is not None:
         cutoff = now - timedelta(seconds=generation_lease_timeout_seconds())
-        if active.created_at >= cutoff:
+        last_activity = active.lease_heartbeat_at or active.created_at
+        if last_activity >= cutoff:
             raise GenerationConflict("Content already has a generation run in progress")
         active.status = "failed"
         active.error_message = "Recovered stale generation run before starting a new run"
@@ -102,7 +106,11 @@ def generate_content(
         lease_heartbeat_at=now,
     )
     db.add(run)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise GenerationConflict("Content already has a generation run in progress") from exc
 
     try:
         provider = get_generation_provider()

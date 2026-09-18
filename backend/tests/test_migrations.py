@@ -111,6 +111,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
     generation_indexes = {index["name"] for index in inspector.get_indexes("generation_runs")}
     assert "ix_generation_runs_content_id" in generation_indexes
     assert "ix_generation_runs_status" in generation_indexes
+    assert "uq_generation_runs_active_content" in generation_indexes
 
     variant_columns = {column["name"] for column in inspector.get_columns("content_variants")}
     assert {
@@ -132,7 +133,7 @@ def test_alembic_bootstraps_current_schema_from_empty_database(tmp_path):
 
     with engine.connect() as connection:
         version = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-    assert version == "0007_generation_run_lease"
+    assert version == "0008_generation_run_active_guard"
 
 
 def test_alembic_can_downgrade_fresh_schema_to_base(tmp_path):
