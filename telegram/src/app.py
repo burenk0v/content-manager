@@ -16,6 +16,7 @@ from scheduler import (
     fetch_profile,
     generate_and_send_profile,
     prepare_telegram_content,
+    approve_and_schedule_content,
     request_profile_regeneration,
     schedule_worker,
     transition_content,
@@ -200,8 +201,7 @@ async def main() -> None:
                 if not profile:
                     await callback.answer("Профиль не найден.", show_alert=True)
                     return
-                await transition_content(content_id, "approved")
-                publication = await create_publication(content_id, profile["channel_id"])
+                publication = await approve_and_schedule_content(content_id, profile["channel_id"])
                 await callback.answer("Post scheduled for publication.")
                 await bot.send_message(callback.from_user.id, f"Publication #{publication['id']} queued for {profile['name']}.")
             elif data.startswith("reject:"):
@@ -219,7 +219,7 @@ async def main() -> None:
                 await transition_content(content_id, "draft")
                 await request_profile_regeneration(profile_id)
                 await callback.answer("Regenerating…")
-                if not await generate_and_send_profile(bot, ai_client, profile, ADMINS, force=True):
+                if not await generate_and_send_profile(bot, profile, ADMINS, force=True):
                     await bot.send_message(callback.from_user.id, f"Не удалось перегенерировать профиль {profile['name']}.")
             else:
                 await callback.answer()
