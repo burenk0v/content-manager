@@ -30,14 +30,14 @@ curl http://127.0.0.1:8000/health/ready
 ~~~
 
 6. Open the Web UI through the configured HTTPS reverse proxy and sign in with ADMIN_USERNAME / ADMIN_PASSWORD.
-7. Create a Content Profile with channel, language, niche, tone, format, rules, timezone, and generation cadence.
-8. Wait for the profile to become due, or use the Telegram /generate <profile_id> command.
-9. Review the generated post in Telegram and approve, reject, or regenerate it.
-10. Configure or create the publication target and schedule, then monitor publication from Telegram.
+7. Open **Content Profiles**. On a fresh installation, use **First-run setup** to create a workspace and add the Telegram channel (`@channel_username` or a negative numeric channel ID such as `-1001234567890`). The bot must already be an administrator of that channel with permission to post.
+8. Create a Content Profile for that workspace/channel with language, niche, tone, format, editorial rules, timezone, and generation cadence. Keep **Active** enabled for autonomous generation.
+9. Wait for the profile to become due, or use the Telegram `/generate <profile_id>` command for an immediate run.
+10. Review the generated post in Telegram and approve, reject, or regenerate it. Approval creates the publication automatically; no second publication target or schedule setup is required.
 
 ## Expected first-run sequence
 
-Content Profile → GenerationRun → ContentVersion → draft → Telegram review → approved → scheduled → publishing → published
+Workspace → Telegram Channel → Content Profile → GenerationRun → ContentVersion → review → approved → scheduled → publishing → published
 
 A provider failure is persisted as a failed GenerationRun and the profile is eligible for a later autonomous attempt. A restart does not require recreating generation state.
 
