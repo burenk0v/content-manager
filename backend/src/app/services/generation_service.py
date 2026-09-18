@@ -125,26 +125,51 @@ def generate_content(
         raise GenerationConflict("Content cannot be regenerated in its current state")
 
     now = datetime.utcnow()
-    active = (db.query(GenerationRun)
+    active = (
+        db.query(GenerationRun)
         .filter(GenerationRun.content_id == content.id, GenerationRun.status == "running")
-        .order_by(GenerationRun.id.desc()).first())
+        .order_by(GenerationRun.id.desc())
+        .first()
+    )
     if active is not None:
         cutoff = now - timedelta(seconds=generation_lease_timeout_seconds())
         last_activity = active.lease_heartbeat_at or active.created_at
         if last_activity >= cutoff:
             raise GenerationConflict("Content already has a generation run in progress")
-        active.status = "failed"
-        active.error_message = "Recovered stale generation run before starting a new run"
-        active.completed_at = now
-        active.lease_heartbeat_at = None
-        audit(db, content.workspace_id, "generation_run", active.id, "recovered",
-              event_type="content.generation_recovered", metadata={"error_message": active.error_message})
+        result = db.execute(
+            update(GenerationRun)
+            .where(
+                GenerationRun.id == active.id,
+                GenerationRun.status == "running",
+                or_(
+                    and_(GenerationRun.lease_heartbeat_at.is_not(None), GenerationRun.lease_heartbeat_at < cutoff),
+                    and_(GenerationRun.lease_heartbeat_at.is_(None), GenerationRun.created_at < cutoff),
+                ),
+            )
+            .values(
+                status="failed",
+                error_message="Recovered stale generation run before starting a new run",
+                completed_at=now,
+                lease_heartbeat_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise GenerationConflict("Content already has a generation run in progress")
+        audit(
+            db,
+            content.workspace_id,
+            "generation_run",
+            active.id,
+            "recovered",
+            event_type="content.generation_recovered",
+            metadata={"error_message": "Recovered stale generation run before starting a new run"},
+        )
         db.flush()
 
-    provider_name = "configured"
     run = GenerationRun(
         content_id=content.id,
-        provider=provider_name,
+        provider="configured",
         model=model,
         status="running",
         prompt=prompt,
@@ -159,12 +184,32 @@ def generate_content(
 
     heartbeat_stop = threading.Event()
     heartbeat_thread: threading.Thread | None = None
+
+    def fail_run(message: str, *, unexpected: bool = False) -> None:
+        db.rollback()
+        failed_run = db.query(GenerationRun).filter(GenerationRun.id == run.id).first() or run
+        failed_run.status = "failed"
+        failed_run.error_message = message[:4000]
+        failed_run.completed_at = datetime.utcnow()
+        failed_run.lease_heartbeat_at = None
+        audit(
+            db,
+            content.workspace_id,
+            "generation_run",
+            failed_run.id,
+            "failed",
+            event_type="content.generation_failed",
+            metadata={"provider": failed_run.provider, "model": failed_run.model, "unexpected": unexpected},
+        )
+        db.commit()
+
     try:
         provider = get_generation_provider()
         provider_name = provider.name
         run.provider = provider_name
         run.lease_heartbeat_at = datetime.utcnow()
         db.commit()
+
         heartbeat_thread = threading.Thread(
             target=_heartbeat_generation,
             args=(run.id, heartbeat_stop),
@@ -172,44 +217,15 @@ def generate_content(
             daemon=True,
         )
         heartbeat_thread.start()
+
         generated = provider.generate(prompt=prompt, system_message=system_message, model=model)
         if transform_generated is not None:
             generated = transform_generated(generated)
     except (GenerationError, GenerationProviderFailure) as exc:
-        db.rollback()
-        run = db.query(GenerationRun).filter(GenerationRun.id == run.id).first() or run
-        run.status = "failed"
-        run.error_message = str(exc)
-        run.completed_at = datetime.utcnow()
-        run.lease_heartbeat_at = None
-        audit(
-            db,
-            content.workspace_id,
-            "generation_run",
-            run.id,
-            "failed",
-            event_type="content.generation_failed",
-            metadata={"provider": run.provider, "model": run.model},
-        )
-        db.commit()
+        fail_run(str(exc))
         raise GenerationProviderFailure(str(exc)) from exc
     except Exception as exc:
-        db.rollback()
-        run = db.query(GenerationRun).filter(GenerationRun.id == run.id).first() or run
-        run.status = "failed"
-        run.error_message = str(exc)[:4000]
-        run.completed_at = datetime.utcnow()
-        run.lease_heartbeat_at = None
-        audit(
-            db,
-            content.workspace_id,
-            "generation_run",
-            run.id,
-            "failed",
-            event_type="content.generation_failed",
-            metadata={"provider": run.provider, "model": run.model, "unexpected": True},
-        )
-        db.commit()
+        fail_run(str(exc), unexpected=True)
         raise GenerationProviderFailure("Generation failed unexpectedly") from exc
     finally:
         heartbeat_stop.set()
@@ -217,17 +233,17 @@ def generate_content(
             heartbeat_thread.join(timeout=2.0)
 
     try:
-            version = ContentVersion(
-                content_id=content.id,
-                version=(content.versions[-1].version + 1) if content.versions else 1,
-                body=generated,
-                source=f"ai:{provider_name}",
-                created_by=None,
-            )
-            db.add(version)
-            db.flush()
-    
-            previous_status = content.status
+        version = ContentVersion(
+            content_id=content.id,
+            version=(content.versions[-1].version + 1) if content.versions else 1,
+            body=generated,
+            source=f"ai:{provider_name}",
+            created_by=None,
+        )
+        db.add(version)
+        db.flush()
+
+        previous_status = content.status
         if previous_status != "draft":
             try:
                 transition(previous_status, "draft")
@@ -235,7 +251,7 @@ def generate_content(
                 raise GenerationConflict("Content cannot be regenerated from its current state") from exc
             content.status = "draft"
         content.updated_at = datetime.utcnow()
-    
+
         run.content_version_id = version.id
         run.status = "succeeded"
         run.completed_at = datetime.utcnow()
@@ -268,28 +284,12 @@ def generate_content(
                 event_type="content.approval_invalidated",
                 metadata={"from": previous_status, "to": "draft", "generation_run_id": run.id},
             )
-            return run
+        return run
     except GenerationProviderFailure:
         raise
     except Exception as exc:
-        db.rollback()
-        run = db.query(GenerationRun).filter(GenerationRun.id == run.id).first() or run
-        run.status = "failed"
-        run.error_message = str(exc)[:4000]
-        run.completed_at = datetime.utcnow()
-        run.lease_heartbeat_at = None
-        audit(
-            db,
-            content.workspace_id,
-            "generation_run",
-            run.id,
-            "failed",
-            event_type="content.generation_failed",
-            metadata={"provider": run.provider, "model": run.model, "unexpected": True},
-        )
-        db.commit()
+        fail_run(str(exc), unexpected=True)
         raise GenerationProviderFailure("Generation failed while persisting its result") from exc
-
 
 def list_generations(db: Session, content_id: int) -> list[GenerationRun]:
     if not db.query(Content).filter(Content.id == content_id).first():
