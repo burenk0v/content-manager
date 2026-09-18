@@ -173,3 +173,71 @@ def test_unexpected_generation_failure_is_persisted(monkeypatch):
     generated = next(item for item in contents.json() if item["title"] == "AI generation in progress")
     generations = client.get(f"/content/contents/{generated['id']}/generations", headers=HEADERS)
     assert generations.json()[0]["status"] == "failed"
+
+
+def test_autonomous_generation_approval_publication_flow(monkeypatch):
+    profile = create_profile()
+
+    class FakeProvider:
+        name = "fake"
+
+        def generate(self, *, prompt, system_message, model):
+            return (
+                "TOPIC: Durable worker leases\n"
+                "POST: Durable leases let background workers recover safely after restarts and avoid duplicate processing."
+            )
+
+    monkeypatch.setattr(
+        "src.app.services.generation_service.get_generation_provider",
+        lambda: FakeProvider(),
+    )
+
+    generated = client.post(
+        f"/content/profiles/{profile['id']}/generate",
+        headers=HEADERS,
+    )
+    assert generated.status_code == 201
+    run = generated.json()
+
+    to_review = client.post(
+        f"/content/contents/{run['content_id']}/transition",
+        json={"status": "review"},
+        headers=HEADERS,
+    )
+    assert to_review.status_code == 200
+
+    approved = client.post(
+        f"/content/contents/{run['content_id']}/approve-and-schedule",
+        json={"content_id": run["content_id"], "channel_id": profile["channel_id"]},
+        headers=HEADERS,
+    )
+    assert approved.status_code == 201
+    publication = approved.json()
+    assert publication["status"] == "scheduled"
+
+    claimed = client.post(
+        f"/content/publications/{publication['id']}/claim",
+        json={"worker_id": "e2e-worker"},
+        headers=HEADERS,
+    )
+    assert claimed.status_code == 200
+    token = claimed.json()["processing_token"]
+
+    completed = client.post(
+        f"/content/publications/{publication['id']}/complete",
+        json={
+            "worker_id": "e2e-worker",
+            "processing_token": token,
+            "external_id": "telegram:test-1",
+        },
+        headers=HEADERS,
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "published"
+
+    snapshot = client.get(
+        f"/content/contents/{run['content_id']}/transitions",
+        headers=HEADERS,
+    )
+    assert snapshot.status_code == 200
+    assert snapshot.json()["status"] == "published"

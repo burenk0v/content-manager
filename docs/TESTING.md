@@ -40,8 +40,8 @@ Before merging a release candidate:
 3. Build all Docker images.
 4. Start the Compose stack with a clean PostgreSQL volume in an isolated environment.
 5. Verify readiness and service startup.
-6. Exercise one end-to-end profile generation and approval flow.
+6. Exercise one end-to-end profile generation → approval → scheduled publication → worker completion flow.
 7. Verify restart recovery.
-8. Review the migration chain for a single current Alembic head.
+8. Review the migration chain for a single current Alembic head.\n9. Confirm service authentication rejects missing/invalid tokens and Telegram handlers reject non-admin users.
 
 A green unit test suite alone is not sufficient evidence of a production-ready deployment.
