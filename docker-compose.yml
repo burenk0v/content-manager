@@ -57,12 +57,19 @@ services:
         condition: service_healthy
       docker-proxy:
         condition: service_started
+      database:
+        condition: service_healthy
     environment:
       BACKEND_API_URL: http://backend:8000
       DOCKER_HOST: tcp://docker-proxy:2375
       FRONTEND_HOST: ${FRONTEND_HOST:-127.0.0.1}
       FRONTEND_SECRET_KEY: ${FRONTEND_SECRET_KEY:?FRONTEND_SECRET_KEY is required}
       FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-}
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:?DB_NAME is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
