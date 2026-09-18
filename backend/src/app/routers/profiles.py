@@ -9,6 +9,9 @@ from src.app.audit import audit
 from src.app.db import get_db
 from src.app.models import Channel, ContentProfile, Workspace
 from src.app.services.profile_schedule_service import is_profile_ready
+
+# Backward-compatible import for existing callers/tests.
+is_ready = is_profile_ready
 from src.app.routers.foundation import require_service_token
 
 router = APIRouter()
