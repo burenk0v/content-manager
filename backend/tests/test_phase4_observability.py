@@ -90,7 +90,7 @@ def test_public_registration_is_disabled_in_production(monkeypatch):
 def test_public_registration_can_be_enabled_explicitly(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("REGISTRATION_ENABLED", "true")
-    response = client.post("/auth/register", json={"username": "enabled-test-user", "password": "secret123"})
+    response = client.post("/auth/register", json={"username": "enabled-test-user", "password": "test-pass"})
     assert response.status_code == 200
     assert response.json()["username"] == "enabled-test-user"
 
