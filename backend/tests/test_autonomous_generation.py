@@ -300,3 +300,68 @@ def test_autonomous_generation_reuses_failed_content_after_restart(monkeypatch):
     )
     generated = next(item for item in contents.json() if item["id"] == content_id)
     assert generated["title"] == "Recoverable Python worker"
+
+
+def test_topic_memory_rejects_close_rephrasing():
+    from src.app.services.topic_memory import find_duplicate_topic
+
+    memory = [("Asyncio gather for parallel tasks", "published")]
+    duplicate = find_duplicate_topic("Parallel execution with asyncio.gather", memory)
+    assert duplicate is not None
+    assert duplicate[0] == "Asyncio gather for parallel tasks"
+    assert duplicate[1] == "published"
+
+
+def test_autonomous_generation_rejects_duplicate_topic_and_recovers_with_new_prompt(monkeypatch):
+    profile = create_profile()
+    calls = []
+    outputs = [
+        "TOPIC: Asyncio gather for parallel tasks\nPOST: asyncio.gather combines awaitables and returns their results in order.",
+        "TOPIC: Parallel execution with asyncio.gather\nPOST: This is a rephrasing of an already published topic and must be rejected.",
+        "TOPIC: Python structural pattern matching\nPOST: Structural pattern matching with match and case can make complex branching easier to read.",
+    ]
+
+    class TopicProvider:
+        name = "fake"
+
+        def generate(self, *, prompt, system_message, model):
+            calls.append(prompt)
+            return outputs.pop(0)
+
+    monkeypatch.setattr(
+        "src.app.services.generation_service.get_generation_provider",
+        lambda: TopicProvider(),
+    )
+
+    first = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
+    assert first.status_code == 201
+
+    duplicate = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
+    assert duplicate.status_code == 502
+
+    contents = client.get(
+        f"/content/contents?workspace_id={profile['workspace_id']}",
+        headers=HEADERS,
+    )
+    titles = [item["title"] for item in contents.json()]
+    assert titles.count("Asyncio gather for parallel tasks") == 1
+    assert "Parallel execution with asyncio.gather" not in titles
+
+    third = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
+    assert third.status_code == 201
+    assert len(calls) == 3
+    assert calls[1] == calls[2]
+
+    contents = client.get(
+        f"/content/contents?workspace_id={profile['workspace_id']}",
+        headers=HEADERS,
+    )
+    titles = [item["title"] for item in contents.json()]
+    assert "Python structural pattern matching" in titles
+
+    generations = client.get(
+        f"/content/contents/{first.json()['content_id']}/generations",
+        headers=HEADERS,
+    )
+    assert generations.status_code == 200
+    assert generations.json()[0]["status"] == "succeeded"
