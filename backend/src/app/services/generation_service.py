@@ -14,6 +14,7 @@ from src.app.ai_generation import GenerationError, get_generation_provider
 from src.app.audit import audit
 from src.app.domain.content_state_machine import InvalidContentTransition, transition
 from src.app.models import Content, ContentProfile, ContentVersion, GenerationRun
+from src.app.services.topic_memory import find_duplicate_topic, load_topic_memory
 
 
 class GenerationNotFound(Exception):
@@ -342,7 +343,7 @@ def build_profile_generation_prompt(profile: ContentProfile, used_topics: set[st
         f"Tone: {profile.tone or 'Clear, useful, and natural'}\n"
         f"Content format: {profile.content_format or 'Publication-ready post'}\n"
         f"Editorial rules: {profile.rules or 'No clickbait; no placeholders; provide useful substance'}\n"
-        f"Previously used topics (avoid): {existing}"
+        f"Topic memory (do not repeat or closely rephrase): {existing}"
     )
 
 
@@ -360,13 +361,8 @@ def generate_profile_content(db: Session, profile_id: int, *, model: str | None 
     # is reused below instead of creating a fresh editorial task.
     recover_stale_generations(db)
 
-    used_topics = {
-        str(row.title).strip().lower()
-        for row in db.query(Content.title)
-        .filter(Content.profile_id == profile.id, Content.title.isnot(None))
-        .all()
-        if row.title
-    }
+    topic_memory = load_topic_memory(db, profile.id)
+    used_topics = {title.casefold() for title, _status in topic_memory}
 
     # A failed autonomous generation is recoverable work, not a new content item.
     # Reuse the same Content row and the last persisted prompt so a worker restart
@@ -396,7 +392,10 @@ def generate_profile_content(db: Session, profile_id: int, *, model: str | None 
             raise GenerationConflict("Profile already has a generation run in progress")
         if latest_run.status == "failed":
             content = candidate
-            recovery_prompt = latest_run.prompt
+            # A duplicate-topic failure must not replay the same prompt forever.
+            # It is safe to reuse prompts for provider/worker failures only.
+            if not (latest_run.error_message or "").startswith("duplicate_topic:"):
+                recovery_prompt = latest_run.prompt
             break
 
     if content is None:
@@ -415,6 +414,13 @@ def generate_profile_content(db: Session, profile_id: int, *, model: str | None 
 
     def transform_generated(generated: str) -> str:
         topic, body = _parse_autonomous_output(generated)
+        duplicate = find_duplicate_topic(topic, topic_memory)
+        if duplicate is not None:
+            existing, status, score = duplicate
+            raise GenerationProviderFailure(
+                f"duplicate_topic: generated topic is too similar to existing topic "
+                f"{existing!r} (status={status}, similarity={score:.2f})"
+            )
         topic_holder["topic"] = topic
         return body
 
