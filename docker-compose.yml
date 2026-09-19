@@ -61,6 +61,11 @@ services:
       GENERATION_LEASE_TIMEOUT_SECONDS: ${GENERATION_LEASE_TIMEOUT_SECONDS:-900}
       SCHEDULER_INTERVAL_SECONDS: ${SCHEDULER_INTERVAL_SECONDS:-15}
       SCHEDULER_LEASE_TIMEOUT_SECONDS: ${SCHEDULER_LEASE_TIMEOUT_SECONDS:-900}
+      MAX_CONCURRENT_GENERATIONS: ${MAX_CONCURRENT_GENERATIONS:-2}
+      PYTHON_VALIDATOR_DIR: /var/lib/python-validator
+      PYTHON_VALIDATOR_TIMEOUT_SECONDS: ${PYTHON_VALIDATOR_TIMEOUT_SECONDS:-8}
+    volumes:
+      - python_validator_jobs:/var/lib/python-validator
     command: ["python", "-m", "src.app.services.autonomous_scheduler"]
 
   python-validator:
