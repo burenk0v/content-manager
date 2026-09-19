@@ -14,6 +14,7 @@ from src.app.ai_generation import GenerationError, get_generation_provider
 from src.app.audit import audit
 from src.app.domain.content_state_machine import InvalidContentTransition, transition
 from src.app.models import Content, ContentProfile, ContentVersion, GenerationRun
+from src.app.services.python_quality import format_quality_failure, validate_post
 from src.app.services.topic_memory import find_duplicate_topic, load_topic_memory
 
 
@@ -334,7 +335,7 @@ def build_profile_generation_prompt(profile: ContentProfile, used_topics: set[st
     return (
         "You are an autonomous content editor. Choose the topic yourself; never ask the operator for one. "
         "Create one complete publication-ready post for the configured profile. Avoid previously used topics. "
-        "Never output scripts, styles, placeholders, or an outline. Return exactly:\n"
+        "Never output scripts, styles, placeholders, or an outline. Any Python code fence must be syntactically valid. Return exactly:\n"
         "TOPIC: <short topic name>\n"
         "POST: <ready-to-publish message>\n\n"
         f"Channel: {profile.channel.name or profile.channel.external_id}\n"
@@ -414,6 +415,11 @@ def generate_profile_content(db: Session, profile_id: int, *, model: str | None 
 
     def transform_generated(generated: str) -> str:
         topic, body = _parse_autonomous_output(generated)
+        quality = validate_post(body)
+        if not quality.valid:
+            raise GenerationProviderFailure(
+                f"python_quality: {format_quality_failure(quality)}"
+            )
         duplicate = find_duplicate_topic(topic, topic_memory)
         if duplicate is not None:
             existing, status, score = duplicate
