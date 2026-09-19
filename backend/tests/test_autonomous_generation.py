@@ -70,7 +70,7 @@ def test_autonomous_profile_generation_persists_run_and_version(monkeypatch):
     assert contents.status_code == 200
     generated = next(item for item in contents.json() if item["id"] == run["content_id"])
     assert generated["title"] == "Reliable background jobs"
-    assert generated["status"] == "draft"
+    assert generated["status"] == "review"
 
     versions = client.get(
         f"/content/contents/{run['content_id']}/versions",
