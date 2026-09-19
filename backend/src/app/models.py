@@ -65,10 +65,10 @@ class ContentProfile(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     last_run = Column(DateTime, nullable=True)
     regeneration_requested = Column(Boolean, nullable=False, default=False)
+    scheduler_lease_token = Column(String(64), nullable=True)
+    scheduler_lease_heartbeat_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    approval_notification_claimed_at = Column(DateTime, nullable=True, index=True)
-    approval_notification_sent_at = Column(DateTime, nullable=True, index=True)
     __table_args__ = (
         UniqueConstraint("channel_id", "name", name="uq_content_profiles_channel_name"),
         CheckConstraint("schedule_type IN ('interval', 'daily')", name="ck_content_profiles_schedule_type"),
@@ -88,6 +88,8 @@ class Content(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    approval_notification_claimed_at = Column(DateTime, nullable=True, index=True)
+    approval_notification_sent_at = Column(DateTime, nullable=True, index=True)
     __table_args__ = (
         CheckConstraint("status IN ('draft', 'review', 'approved', 'scheduled', 'publishing', 'published', 'failed', 'archived')", name="ck_contents_status_valid"),
     )
