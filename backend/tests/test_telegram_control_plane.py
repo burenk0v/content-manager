@@ -68,7 +68,7 @@ def test_regenerate_is_idempotent_and_queues_profile():
 
 
 def test_notification_completion_requires_matching_claim_token():
-    from datetime import datetime, timedelta
+    from datetime import datetime
     from src.app.models import Content
 
     profile = create_profile()
