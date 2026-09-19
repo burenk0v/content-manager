@@ -60,6 +60,7 @@ async def test_notification_is_completed_only_after_delivery(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_notification_stays_retryable_when_delivery_fails(monkeypatch):
+    monkeypatch.setattr(scheduler, "CALLBACK_SECRET", "test-secret")
     completed = []
 
     async def backend_request(method, path, json=None):
