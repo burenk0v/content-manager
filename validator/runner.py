@@ -29,7 +29,7 @@ def run_job(job: Path) -> None:
         if not isinstance(code, str) or not code.strip():
             raise ValueError("empty Python payload")
         timeout = max(1, min(int(payload.get("timeout", 8)), MAX_TIMEOUT))
-        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+        with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "generated.py"
             script.write_text(code, encoding="utf-8")
             completed = subprocess.run(
