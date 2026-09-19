@@ -51,6 +51,10 @@ services:
     pids_limit: 64
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m
     volumes:
       - python_validator_jobs:/var/lib/python-validator
 
