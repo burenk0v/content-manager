@@ -20,10 +20,13 @@ def normalize_topic(topic: str) -> str:
 
 
 def topic_tokens(topic: str) -> set[str]:
+    # Treat punctuation such as "." in "asyncio.gather" as a token boundary.
+    # Keep "#" and "+" so Python/C++ topic markers remain meaningful.
+    tokens = re.findall(r"[\w]+(?:[+#][\w]+)*", normalize_topic(topic), flags=re.UNICODE)
     return {
-        token.strip(".-+#")
-        for token in normalize_topic(topic).split()
-        if token.strip(".-+#") and token.strip(".-+#") not in STOPWORDS
+        token
+        for token in tokens
+        if token and token not in STOPWORDS
     }
 
 
