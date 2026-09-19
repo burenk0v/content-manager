@@ -241,3 +241,62 @@ def test_autonomous_generation_approval_publication_flow(monkeypatch):
     )
     assert snapshot.status_code == 200
     assert snapshot.json()["status"] == "published"
+
+
+def test_autonomous_generation_reuses_failed_content_after_restart(monkeypatch):
+    profile = create_profile()
+    calls = []
+
+    class RestartingProvider:
+        name = "fake"
+
+        def generate(self, *, prompt, system_message, model):
+            calls.append(prompt)
+            if len(calls) == 1:
+                from src.app.ai_generation import GenerationError
+                raise GenerationError("simulated worker restart")
+            return (
+                "TOPIC: Recoverable Python worker\n"
+                "POST: Persisting generation state lets a restarted worker continue the same editorial task instead of creating unrelated content."
+            )
+
+    monkeypatch.setattr(
+        "src.app.services.generation_service.get_generation_provider",
+        lambda: RestartingProvider(),
+    )
+
+    first = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
+    assert first.status_code == 502
+
+    contents = client.get(
+        f"/content/contents?workspace_id={profile['workspace_id']}",
+        headers=HEADERS,
+    )
+    assert contents.status_code == 200
+    in_progress = next(
+        item for item in contents.json()
+        if item["title"] == "AI generation in progress"
+    )
+    content_id = in_progress["id"]
+
+    generations = client.get(
+        f"/content/contents/{content_id}/generations",
+        headers=HEADERS,
+    )
+    assert generations.status_code == 200
+    assert generations.json()[0]["status"] == "failed"
+
+    second = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
+    assert second.status_code == 201
+    run = second.json()
+    assert run["content_id"] == content_id
+    assert run["status"] == "succeeded"
+    assert len(calls) == 2
+    assert calls[1] == calls[0]
+
+    contents = client.get(
+        f"/content/contents?workspace_id={profile['workspace_id']}",
+        headers=HEADERS,
+    )
+    generated = next(item for item in contents.json() if item["id"] == content_id)
+    assert generated["title"] == "Recoverable Python worker"
