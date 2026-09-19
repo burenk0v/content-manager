@@ -355,6 +355,11 @@ def generate_profile_content(db: Session, profile_id: int, *, model: str | None 
     if not profile:
         raise GenerationNotFound
 
+    # Recover abandoned work before deciding whether this profile needs a new item.
+    # A stale run is converted to a failed run, then the same Content row/prompt
+    # is reused below instead of creating a fresh editorial task.
+    recover_stale_generations(db)
+
     used_topics = {
         str(row.title).strip().lower()
         for row in db.query(Content.title)
