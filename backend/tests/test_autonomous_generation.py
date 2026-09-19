@@ -490,7 +490,7 @@ def test_python_sandbox_client_surfaces_validator_failure(monkeypatch, tmp_path)
         while time.monotonic() < deadline:
             jobs = list(inbox.glob("*.json"))
             if jobs:
-                (outbox / jobs[0].name).write_text(json.dumps({"ok": False, "error": "execution failed"}))
+                tmp = outbox / (".tmp-" + jobs[0].name)\n                tmp.write_text(json.dumps({"ok": False, "error": "execution failed"}))\n                tmp.replace(outbox / jobs[0].name)
                 return
             time.sleep(0.01)
         raise AssertionError("sandbox request was not created")
