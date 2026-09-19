@@ -33,8 +33,26 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       GENERATION_LEASE_TIMEOUT_SECONDS: ${GENERATION_LEASE_TIMEOUT_SECONDS:-900}
+      PYTHON_VALIDATOR_DIR: /var/lib/python-validator
+      PYTHON_VALIDATOR_TIMEOUT_SECONDS: ${PYTHON_VALIDATOR_TIMEOUT_SECONDS:-8}
+    volumes:
+      - python_validator_jobs:/var/lib/python-validator
     ports:
       - "127.0.0.1:8000:8000"
+
+  python-validator:
+    build: ./validator
+    container_name: python-validator
+    restart: always
+    read_only: true
+    network_mode: none
+    mem_limit: 256m
+    cpus: 0.50
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - python_validator_jobs:/var/lib/python-validator
 
   frontend:
     build: ./frontend
@@ -82,3 +100,4 @@ services:
 
 volumes:
   postgres_data:
+  python_validator_jobs:
