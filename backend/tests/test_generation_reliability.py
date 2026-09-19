@@ -104,3 +104,9 @@ def test_profile_generation_auto_recovers_stale_run_and_reuses_content(monkeypat
     response = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert response.status_code == 201
     assert response.json()["content_id"] == content_id
+    db = TestingSession()
+    try:
+        recovered_content = db.query(Content).filter(Content.id == content_id).first()
+        assert recovered_content.status == "review"
+    finally:
+        db.close()
