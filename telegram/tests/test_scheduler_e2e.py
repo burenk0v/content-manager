@@ -1,6 +1,6 @@
 import pytest
 
-from scheduler import generate_and_send_profile
+from scheduler import retry_pending_notifications
 
 
 class FakeBot:
@@ -26,35 +26,20 @@ class FakeResponse:
 
 
 @pytest.mark.asyncio
-async def test_autonomous_generation_reaches_telegram_review(monkeypatch):
+async def test_pending_review_notification_is_delivered(monkeypatch):
     monkeypatch.setattr("scheduler.CALLBACK_SECRET", "test-secret")
     bot = FakeBot()
-    profile = {
-        "id": 7,
-        "workspace_id": 1,
-        "name": "Test profile",
-        "language": "en",
-    }
     calls = []
 
-    async def claim(profile_id, *, force=False):
-        calls.append(("claim", profile_id, force))
-        return profile
-
     async def backend_request(method, path, json=None):
-        calls.append(("request", method, path, json))
-        if method == "POST" and path == "/content/profiles/7/generate":
-            return FakeResponse({
-                "id": 99,
-                "content_id": 42,
-                "content_version_id": 77,
-                "status": "succeeded",
-            })
-        if method == "POST" and path == "/content/contents/42/notification-complete":
+        calls.append((method, path, json))
+        if path == "/content/contents/42/notification-claim":
+            return FakeResponse({"id": 42, "status": "review"})
+        if path == "/content/contents/42/notification-complete":
             return FakeResponse({"id": 42, "status": "review"})
         raise AssertionError((method, path, json))
 
-    async def contents(workspace_id):
+    async def contents(path):
         return [{
             "id": 42,
             "profile_id": 7,
@@ -64,15 +49,17 @@ async def test_autonomous_generation_reaches_telegram_review(monkeypatch):
             "status": "review",
         }]
 
-    monkeypatch.setattr("scheduler.claim_profile_run", claim)
+    async def profile(profile_id):
+        return {"id": 7, "name": "Test profile", "language": "en", "is_active": True}
+
     monkeypatch.setattr("scheduler.backend_request", backend_request)
     monkeypatch.setattr("scheduler.fetch_collection", contents)
-    monkeypatch.setattr("scheduler.complete_notification", lambda content_id: backend_request(
-        "POST", f"/content/contents/{content_id}/notification-complete"
-    ))
+    monkeypatch.setattr("scheduler.fetch_profile", profile)
 
-    assert await generate_and_send_profile(bot, profile, [1001])
-    assert calls[0] == ("claim", 7, False)
-    assert ("request", "POST", "/content/profiles/7/generate", {}) in calls
+    await retry_pending_notifications(bot, [1001])
+
+    assert calls[0] == ("POST", "/content/contents/42/notification-claim", None)
+    assert calls[1] == ("POST", "/content/contents/42/notification-complete", None)
     assert bot.calls and bot.calls[0][0] == 1001
     assert "Test topic" in bot.calls[0][1]
+    assert bot.calls[0][3] is not None

@@ -460,5 +460,18 @@ def generate_profile_content(
         raise
 
     content.title = topic_holder["topic"]
+    previous_status = content.status
+    transition(previous_status, "review")
+    content.status = "review"
+    content.updated_at = datetime.utcnow()
+    audit(
+        db,
+        content.workspace_id,
+        "content",
+        content.id,
+        "status_changed",
+        event_type="content.ready_for_approval",
+        metadata={"from": previous_status, "to": "review", "generation_run_id": run.id},
+    )
     db.flush()
     return run
