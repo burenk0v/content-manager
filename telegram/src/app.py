@@ -14,11 +14,10 @@ from publication_worker import publication_worker
 from scheduler import (
     backend_request,
     fetch_profile,
-    generate_and_send_profile,
     prepare_telegram_content,
     approve_and_schedule_content,
     request_profile_regeneration,
-    schedule_worker,
+    notification_worker,
     transition_content,
     verify_callback_data,
 )
@@ -173,8 +172,8 @@ async def main() -> None:
             await message.answer("Профиль не найден или выключен.")
             return
         await message.answer(f"Запускаю генерацию для <b>{escape(str(profile.get('name', profile_id)))}</b>…", parse_mode="HTML")
-        if not await generate_and_send_profile(bot, profile, ADMINS, force=True):
-            await message.answer("Генерация не удалась. Проверьте настройки профиля и AI.")
+        await request_profile_regeneration(profile_id)
+        await message.answer("Запрос на генерацию принят. Автономный scheduler запустит следующий run.")
 
     @dp.message()
     async def messages(message: types.Message):
@@ -211,19 +210,24 @@ async def main() -> None:
                 await bot.send_message(callback.from_user.id, f"Publication #{publication['id']} queued for {profile['name']}.")
             elif action == "reject":
                 content_id = identifiers[0]
-                await transition_content(content_id, "draft")
-                await callback.answer("Post rejected.")
+                await backend_request(
+                    "POST",
+                    f"/content/contents/{content_id}/reject",
+                    json={"reason": "Rejected by Telegram operator"},
+                )
+                await callback.answer("Post rejected and returned to draft.")
             elif action == "regenerate":
                 profile_id, content_id = identifiers
                 profile = await fetch_profile(profile_id)
                 if not profile or not profile.get("is_active"):
                     await callback.answer("Профиль недоступен.", show_alert=True)
                     return
-                await transition_content(content_id, "draft")
-                await request_profile_regeneration(profile_id)
-                await callback.answer("Regenerating…")
-                if not await generate_and_send_profile(bot, profile, ADMINS, force=True):
-                    await bot.send_message(callback.from_user.id, f"Не удалось перегенерировать профиль {profile['name']}.")
+                await backend_request(
+                    "POST",
+                    f"/content/contents/{content_id}/regenerate",
+                    json={"reason": "Telegram operator requested regeneration"},
+                )
+                await callback.answer("Regeneration queued for autonomous scheduler.")
             else:
                 await callback.answer()
         except Exception:
@@ -233,7 +237,7 @@ async def main() -> None:
             with contextlib.suppress(Exception):
                 await bot.delete_message(callback.message.chat.id, callback.message.message_id)
 
-    schedule_task = asyncio.create_task(schedule_worker(bot, ADMINS))
+    schedule_task = asyncio.create_task(notification_worker(bot, ADMINS))
     publication_task = asyncio.create_task(publication_worker(bot))
     try:
         await dp.start_polling(bot)
