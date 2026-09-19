@@ -55,7 +55,7 @@ def load_topic_memory(db: Session, profile_id: int) -> list[tuple[str, str]]:
     return [(str(title).strip(), str(status)) for title, status in rows if str(title).strip()]
 
 
-def find_duplicate_topic(topic: str, memory: list[tuple[str, str]], threshold: float = 0.82) -> tuple[str, str, float] | None:
+def find_duplicate_topic(topic: str, memory: list[tuple[str, str]], threshold: float = 0.65) -> tuple[str, str, float] | None:
     for existing, status in memory:
         score = topic_similarity(topic, existing)
         if score >= threshold:
