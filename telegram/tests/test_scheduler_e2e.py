@@ -27,6 +27,7 @@ class FakeResponse:
 
 @pytest.mark.asyncio
 async def test_pending_review_notification_is_delivered(monkeypatch):
+    monkeypatch.setattr("scheduler.CALLBACK_SECRET", "test-secret")
     bot = FakeBot()
     calls = []
 
