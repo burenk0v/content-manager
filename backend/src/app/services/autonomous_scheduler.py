@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import os
+import logging
 import threading
 import time
 import uuid
@@ -268,7 +269,6 @@ def scheduler_tick() -> int:
         except Exception:
             claim_db.rollback()
             token = None
-            import logging
             logging.getLogger(__name__).exception("Failed to claim scheduler profile %s", profile_id)
         finally:
             claim_db.close()
@@ -284,13 +284,11 @@ def scheduler_tick() -> int:
             try:
                 future.result()
             except Exception:
-                import logging
                 logging.getLogger(__name__).exception("Autonomous scheduler worker failed")
     return len(jobs)
 
 
 def run_forever() -> None:
-    import logging
     logger = logging.getLogger(__name__)
     while True:
         try:
