@@ -362,16 +362,49 @@ def generate_profile_content(db: Session, profile_id: int, *, model: str | None 
         .all()
         if row.title
     }
-    content = Content(
-        workspace_id=profile.workspace_id,
-        profile_id=profile.id,
-        title="AI generation in progress",
-        language=profile.language,
-        status="draft",
-        created_by=None,
+
+    # A failed autonomous generation is recoverable work, not a new content item.
+    # Reuse the same Content row and the last persisted prompt so a worker restart
+    # does not silently select a different topic and start the editorial cycle over.
+    recoverable = (
+        db.query(Content)
+        .filter(
+            Content.profile_id == profile.id,
+            Content.title == "AI generation in progress",
+            Content.status == "draft",
+        )
+        .order_by(Content.created_at.asc(), Content.id.asc())
+        .all()
     )
-    db.add(content)
-    db.flush()
+    content = None
+    recovery_prompt = None
+    for candidate in recoverable:
+        latest_run = (
+            db.query(GenerationRun)
+            .filter(GenerationRun.content_id == candidate.id)
+            .order_by(GenerationRun.id.desc())
+            .first()
+        )
+        if latest_run is None:
+            continue
+        if latest_run.status == "running":
+            raise GenerationConflict("Profile already has a generation run in progress")
+        if latest_run.status == "failed":
+            content = candidate
+            recovery_prompt = latest_run.prompt
+            break
+
+    if content is None:
+        content = Content(
+            workspace_id=profile.workspace_id,
+            profile_id=profile.id,
+            title="AI generation in progress",
+            language=profile.language,
+            status="draft",
+            created_by=None,
+        )
+        db.add(content)
+        db.flush()
 
     topic_holder: dict[str, str] = {}
 
@@ -384,7 +417,7 @@ def generate_profile_content(db: Session, profile_id: int, *, model: str | None 
         run = generate_content(
             db,
             content.id,
-            prompt=build_profile_generation_prompt(profile, used_topics),
+            prompt=recovery_prompt or build_profile_generation_prompt(profile, used_topics),
             system_message="You are an autonomous content editor. Produce complete publication-ready content.",
             model=model,
             transform_generated=transform_generated,
