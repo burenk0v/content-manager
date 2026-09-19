@@ -67,16 +67,22 @@ def _heartbeat_generation(run_id: int, stop_event: threading.Event) -> None:
         finally:
             heartbeat_db.close()
 
+
 def recover_stale_generations(db: Session) -> list[GenerationRun]:
     now = datetime.utcnow()
     cutoff = now - timedelta(seconds=generation_lease_timeout_seconds())
-    candidates = (db.query(GenerationRun)
+    candidates = (
+        db.query(GenerationRun)
         .filter(
             GenerationRun.status == "running",
-            ((GenerationRun.lease_heartbeat_at.is_not(None) & (GenerationRun.lease_heartbeat_at < cutoff)) |
-             (GenerationRun.lease_heartbeat_at.is_(None) & (GenerationRun.created_at < cutoff))),
+            (
+                (GenerationRun.lease_heartbeat_at.is_not(None) & (GenerationRun.lease_heartbeat_at < cutoff))
+                | (GenerationRun.lease_heartbeat_at.is_(None) & (GenerationRun.created_at < cutoff))
+            ),
         )
-        .order_by(GenerationRun.id.asc()).all())
+        .order_by(GenerationRun.id.asc())
+        .all()
+    )
     recovered = []
     for candidate in candidates:
         result = db.execute(
@@ -104,8 +110,15 @@ def recover_stale_generations(db: Session) -> list[GenerationRun]:
         if profile is not None:
             profile.regeneration_requested = True
             profile.updated_at = now
-        audit(db, run.content.workspace_id, "generation_run", run.id, "recovered",
-              event_type="content.generation_recovered", metadata={"error_message": run.error_message})
+        audit(
+            db,
+            run.content.workspace_id,
+            "generation_run",
+            run.id,
+            "recovered",
+            event_type="content.generation_recovered",
+            metadata={"error_message": run.error_message},
+        )
         recovered.append(run)
     if recovered:
         db.commit()
@@ -294,6 +307,7 @@ def generate_content(
         fail_run(str(exc), unexpected=True)
         raise GenerationProviderFailure("Generation failed while persisting its result") from exc
 
+
 def list_generations(db: Session, content_id: int) -> list[GenerationRun]:
     if not db.query(Content).filter(Content.id == content_id).first():
         raise GenerationNotFound
@@ -308,6 +322,7 @@ def list_generations(db: Session, content_id: int) -> list[GenerationRun]:
 
 def _parse_autonomous_output(text: str) -> tuple[str, str]:
     import re
+
     value = (text or "").strip()
     match = re.search(r"TOPIC:\s*(.+?)\s*POST:\s*(.+)", value, re.S | re.I)
     if not match:
@@ -349,7 +364,13 @@ def build_profile_generation_prompt(profile: ContentProfile, used_topics: set[st
     )
 
 
-def generate_profile_content(\n    db: Session,\n    profile_id: int,\n    *,\n    model: str | None = None,\n    scheduler_lease_token: str | None = None,\n) -> GenerationRun:
+def generate_profile_content(
+    db: Session,
+    profile_id: int,
+    *,
+    model: str | None = None,
+    scheduler_lease_token: str | None = None,
+) -> GenerationRun:
     profile = (
         db.query(ContentProfile)
         .filter(ContentProfile.id == profile_id, ContentProfile.is_active.is_(True))
@@ -358,17 +379,14 @@ def generate_profile_content(\n    db: Session,\n    profile_id: int,\n    *,\n 
     if not profile:
         raise GenerationNotFound
 
-    # Recover abandoned work before deciding whether this profile needs a new item.
-    # A stale run is converted to a failed run, then the same Content row/prompt
-    # is reused below instead of creating a fresh editorial task.
+    if profile.scheduler_lease_token and profile.scheduler_lease_token != scheduler_lease_token:
+        raise GenerationConflict("Profile is owned by the autonomous scheduler")
+
     recover_stale_generations(db)
 
     topic_memory = load_topic_memory(db, profile.id)
     used_topics = {title.casefold() for title, _status in topic_memory}
 
-    # A failed autonomous generation is recoverable work, not a new content item.
-    # Reuse the same Content row and the last persisted prompt so a worker restart
-    # does not silently select a different topic and start the editorial cycle over.
     recoverable = (
         db.query(Content)
         .filter(
@@ -394,8 +412,6 @@ def generate_profile_content(\n    db: Session,\n    profile_id: int,\n    *,\n 
             raise GenerationConflict("Profile already has a generation run in progress")
         if latest_run.status == "failed":
             content = candidate
-            # A duplicate-topic failure must not replay the same prompt forever.
-            # It is safe to reuse prompts for provider/worker failures only.
             if not (latest_run.error_message or "").startswith("duplicate_topic:"):
                 recovery_prompt = latest_run.prompt
             break
@@ -418,9 +434,7 @@ def generate_profile_content(\n    db: Session,\n    profile_id: int,\n    *,\n 
         topic, body = _parse_autonomous_output(generated)
         quality = validate_post(body)
         if not quality.valid:
-            raise GenerationProviderFailure(
-                f"python_quality: {format_quality_failure(quality)}"
-            )
+            raise GenerationProviderFailure(f"python_quality: {format_quality_failure(quality)}")
         duplicate = find_duplicate_topic(topic, topic_memory)
         if duplicate is not None:
             existing, status, score = duplicate
