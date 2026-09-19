@@ -349,7 +349,7 @@ def build_profile_generation_prompt(profile: ContentProfile, used_topics: set[st
     )
 
 
-def generate_profile_content(db: Session, profile_id: int, *, model: str | None = None) -> GenerationRun:
+def generate_profile_content(\n    db: Session,\n    profile_id: int,\n    *,\n    model: str | None = None,\n    scheduler_lease_token: str | None = None,\n) -> GenerationRun:
     profile = (
         db.query(ContentProfile)
         .filter(ContentProfile.id == profile_id, ContentProfile.is_active.is_(True))
