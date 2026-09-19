@@ -15,6 +15,7 @@ from src.app.audit import audit
 from src.app.domain.content_state_machine import InvalidContentTransition, transition
 from src.app.models import Content, ContentProfile, ContentVersion, GenerationRun
 from src.app.services.python_quality import format_quality_failure, validate_post
+from src.app.services.python_sandbox import PythonSandboxError, execute_python_blocks
 from src.app.services.topic_memory import find_duplicate_topic, load_topic_memory
 
 
