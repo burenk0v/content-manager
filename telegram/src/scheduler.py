@@ -373,14 +373,11 @@ async def retry_pending_notifications(bot: Bot, admins: list[int]) -> None:
             await complete_notification(int(item["id"]))
 
 
-async def schedule_worker(bot: Bot, admins: list[int]) -> None:
+async def notification_worker(bot: Bot, admins: list[int]) -> None:
+    """Deliver durable approval notifications; generation belongs to the autonomous scheduler."""
     while True:
         try:
             await retry_pending_notifications(bot, admins)
-            await recover_stale_generations()
-            profiles = await fetch_ready_profiles()
-            for profile in profiles:
-                await generate_and_send_profile(bot, profile, admins)
         except Exception:
-            logging.exception("Error while processing autonomous content profiles")
+            logging.exception("Error while processing Telegram approval notifications")
         await asyncio.sleep(SCHEDULE_CHECK_INTERVAL_SECONDS)
