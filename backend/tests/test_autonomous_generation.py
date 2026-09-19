@@ -365,3 +365,69 @@ def test_autonomous_generation_rejects_duplicate_topic_and_recovers_with_new_pro
     )
     assert generations.status_code == 200
     assert generations.json()[0]["status"] == "succeeded"
+
+
+def test_python_quality_accepts_valid_python_block():
+    from src.app.services.python_quality import validate_post
+
+    report = validate_post(
+        "Use this helper:\n\n```python\ndef add(a: int, b: int) -> int:\n    return a + b\n```"
+    )
+    assert report.checked is True
+    assert report.valid is True
+    assert report.issues == ()
+
+
+def test_python_quality_rejects_invalid_python_block():
+    from src.app.services.python_quality import validate_post
+
+    report = validate_post(
+        "Broken example:\n\n```python\ndef add(a, b)\n    return a + b\n```"
+    )
+    assert report.checked is True
+    assert report.valid is False
+    assert report.issues[0].code == "syntax_error"
+
+
+def test_autonomous_generation_rejects_invalid_python_before_persistence(monkeypatch):
+    profile = create_profile()
+
+    class InvalidPythonProvider:
+        name = "fake"
+
+        def generate(self, *, prompt, system_message, model):
+            return (
+                "TOPIC: Python syntax pitfalls\n"
+                "POST: Check this example before using it.\n\n"
+                "```python\n"
+                "def broken(x)\n"
+                "    return x\n"
+                "```"
+            )
+
+    monkeypatch.setattr(
+        "src.app.services.generation_service.get_generation_provider",
+        lambda: InvalidPythonProvider(),
+    )
+
+    response = client.post(
+        f"/content/profiles/{profile['id']}/generate",
+        headers=HEADERS,
+    )
+    assert response.status_code == 502
+
+    contents = client.get(
+        f"/content/contents?workspace_id={profile['workspace_id']}",
+        headers=HEADERS,
+    )
+    generated = next(
+        item for item in contents.json()
+        if item["title"] == "AI generation in progress"
+    )
+    generations = client.get(
+        f"/content/contents/{generated['id']}/generations",
+        headers=HEADERS,
+    )
+    assert generations.status_code == 200
+    assert generations.json()[0]["status"] == "failed"
+    assert generations.json()[0]["error_message"].startswith("python_quality:")
