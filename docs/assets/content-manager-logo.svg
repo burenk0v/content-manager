@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+<title id="title">Content Manager</title>
+<desc id="desc">Gradient rounded C-shaped document mark with a sparkle.</desc>
+<defs>
+  <linearGradient id="g" x1="80" y1="80" x2="430" y2="430" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#2563EB"/>
+    <stop offset="1" stop-color="#7C3AED"/>
+  </linearGradient>
+</defs>
+<rect x="24" y="24" width="464" height="464" rx="112" fill="url(#g)"/>
+<path d="M320 126c-30-24-67-38-106-38-101 0-182 81-182 182s81 182 182 182c39 0 76-14 106-38" fill="none" stroke="#fff" stroke-width="58" stroke-linecap="round"/>
+<rect x="155" y="175" width="150" height="34" rx="17" fill="#fff" opacity=".96"/>
+<rect x="155" y="239" width="116" height="34" rx="17" fill="#fff" opacity=".88"/>
+<rect x="155" y="303" width="82" height="34" rx="17" fill="#fff" opacity=".76"/>
+<path d="M390 92l10 25 25 10-25 10-10 25-10-25-25-10 25-10z" fill="#fff"/>
+</svg>
