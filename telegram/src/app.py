@@ -18,7 +18,6 @@ from scheduler import (
     approve_and_schedule_content,
     request_profile_regeneration,
     notification_worker,
-    transition_content,
     verify_callback_data,
 )
 
