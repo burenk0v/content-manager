@@ -1,5 +1,9 @@
 # content-manager
 
+<p align="center"><img src="docs/assets/content-manager-logo.svg" alt="Content Manager logo" width="180"></p>
+
+<p align="center"><strong>Self-hosted AI content manager</strong><br>Autonomous generation · Telegram approvals · Automatic publishing</p>
+
 Content Manager is a Docker-based project with three main services for managing content schedules, topics, AI-assisted content generation, and Telegram publishing.
 
 ## Overview
