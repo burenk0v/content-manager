@@ -431,3 +431,73 @@ def test_autonomous_generation_rejects_invalid_python_before_persistence(monkeyp
     assert generations.status_code == 200
     assert generations.json()[0]["status"] == "failed"
     assert generations.json()[0]["error_message"].startswith("python_quality:")
+
+
+def test_python_sandbox_client_round_trip(monkeypatch, tmp_path):
+    import json
+    import threading
+    import time
+
+    from src.app.services.python_sandbox import execute_python_blocks
+
+    root = tmp_path / "validator"
+    inbox = root / "inbox"
+    outbox = root / "outbox"
+    inbox.mkdir(parents=True)
+    outbox.mkdir(parents=True)
+    monkeypatch.setenv("PYTHON_VALIDATOR_DIR", str(root))
+    monkeypatch.setenv("PYTHON_VALIDATOR_TIMEOUT_SECONDS", "2")
+
+    def worker():
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            jobs = list(inbox.glob("*.json"))
+            if jobs:
+                job = jobs[0]
+                payload = json.loads(job.read_text())
+                assert "print('ok')" in payload["code"]
+                response = outbox / job.name
+                response.write_text(json.dumps({"ok": True}))
+                return
+            time.sleep(0.01)
+        raise AssertionError("sandbox request was not created")
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    execute_python_blocks(["print('ok')"])
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+
+
+def test_python_sandbox_client_surfaces_validator_failure(monkeypatch, tmp_path):
+    import json
+    import threading
+    import time
+
+    import pytest
+    from src.app.services.python_sandbox import PythonSandboxError, execute_python_blocks
+
+    root = tmp_path / "validator"
+    inbox = root / "inbox"
+    outbox = root / "outbox"
+    inbox.mkdir(parents=True)
+    outbox.mkdir(parents=True)
+    monkeypatch.setenv("PYTHON_VALIDATOR_DIR", str(root))
+    monkeypatch.setenv("PYTHON_VALIDATOR_TIMEOUT_SECONDS", "2")
+
+    def worker():
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            jobs = list(inbox.glob("*.json"))
+            if jobs:
+                (outbox / jobs[0].name).write_text(json.dumps({"ok": False, "error": "execution failed"}))
+                return
+            time.sleep(0.01)
+        raise AssertionError("sandbox request was not created")
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    with pytest.raises(PythonSandboxError, match="execution failed"):
+        execute_python_blocks(["raise RuntimeError('boom')"])
+    thread.join(timeout=2)
+    assert not thread.is_alive()
