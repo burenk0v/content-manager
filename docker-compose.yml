@@ -33,12 +33,35 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       GENERATION_LEASE_TIMEOUT_SECONDS: ${GENERATION_LEASE_TIMEOUT_SECONDS:-900}
+      SCHEDULER_INTERVAL_SECONDS: ${SCHEDULER_INTERVAL_SECONDS:-15}
+      SCHEDULER_LEASE_TIMEOUT_SECONDS: ${SCHEDULER_LEASE_TIMEOUT_SECONDS:-900}
       PYTHON_VALIDATOR_DIR: /var/lib/python-validator
       PYTHON_VALIDATOR_TIMEOUT_SECONDS: ${PYTHON_VALIDATOR_TIMEOUT_SECONDS:-8}
     volumes:
       - python_validator_jobs:/var/lib/python-validator
     ports:
       - "127.0.0.1:8000:8000"
+
+  autonomous-scheduler:
+    build: ./backend
+    container_name: autonomous-scheduler
+    restart: always
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:?DB_USER is required}:${DB_PASSWORD:?DB_PASSWORD is required}@database:5432/${DB_NAME:?DB_NAME is required}
+      APP_ENV: ${APP_ENV:-production}
+      BACKEND_SECRET_KEY: ${BACKEND_SECRET_KEY:?BACKEND_SECRET_KEY is required}
+      SERVICE_ACCOUNT_TOKEN: ${SERVICE_ACCOUNT_TOKEN:?SERVICE_ACCOUNT_TOKEN is required}
+      PUBLICATION_WORKER_TOKEN: ${PUBLICATION_WORKER_TOKEN:?PUBLICATION_WORKER_TOKEN is required}
+      AI_GENERATION_PROVIDER: ${AI_GENERATION_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      GENERATION_LEASE_TIMEOUT_SECONDS: ${GENERATION_LEASE_TIMEOUT_SECONDS:-900}
+      SCHEDULER_INTERVAL_SECONDS: ${SCHEDULER_INTERVAL_SECONDS:-15}
+      SCHEDULER_LEASE_TIMEOUT_SECONDS: ${SCHEDULER_LEASE_TIMEOUT_SECONDS:-900}
+    command: ["python", "-m", "src.app.services.autonomous_scheduler"]
 
   python-validator:
     build: ./validator
