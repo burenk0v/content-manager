@@ -67,15 +67,6 @@ async def fetch_collection(path: str) -> list[dict[str, Any]]:
     return payload if isinstance(payload, list) else []
 
 
-async def fetch_ready_profiles() -> list[dict[str, Any]]:
-    return await fetch_collection("/content/profiles/ready")
-
-
-async def recover_stale_generations() -> None:
-    response = await backend_request("POST", "/content/generations/recover-stale")
-    response.raise_for_status()
-
-
 async def fetch_profile(profile_id: int) -> dict[str, Any] | None:
     response = await backend_request("GET", f"/content/profiles/{profile_id}")
     if response.status_code == 404:
@@ -86,54 +77,6 @@ async def fetch_profile(profile_id: int) -> dict[str, Any] | None:
 
 async def request_profile_regeneration(profile_id: int) -> dict[str, Any]:
     response = await backend_request("POST", f"/content/profiles/{profile_id}/regenerate")
-    response.raise_for_status()
-    return response.json()
-
-
-async def claim_profile_run(profile_id: int, *, force: bool = False) -> dict[str, Any]:
-    path = f"/content/profiles/{profile_id}/claim"
-    if force:
-        path += "?force=true&record_run=false"
-    response = await backend_request("POST", path)
-    if response.status_code == 409:
-        return {}
-    response.raise_for_status()
-    return response.json()
-
-
-async def mark_profile_run(profile_id: int) -> dict[str, Any]:
-    response = await backend_request("POST", f"/content/profiles/{profile_id}/run")
-    response.raise_for_status()
-    return response.json()
-
-
-async def fetch_contents(workspace_id: int) -> list[dict[str, Any]]:
-    return await fetch_collection(f"/content/contents?workspace_id={workspace_id}")
-
-
-async def create_content(profile: dict[str, Any], topic_name: str, generated_text: str) -> dict[str, Any]:
-    response = await backend_request(
-        "POST",
-        "/content/contents",
-        json={
-            "workspace_id": profile["workspace_id"],
-            "profile_id": profile["id"],
-            "title": topic_name,
-            "body": generated_text,
-            "language": profile["language"],
-            "source": "ai",
-        },
-    )
-    response.raise_for_status()
-    return response.json()
-
-
-async def transition_content(content_id: int, status: str) -> dict[str, Any]:
-    response = await backend_request(
-        "POST",
-        f"/content/contents/{content_id}/transition",
-        json={"status": status},
-    )
     response.raise_for_status()
     return response.json()
 
@@ -276,29 +219,6 @@ async def complete_notification(content_id: int) -> None:
     response.raise_for_status()
 
 
-def build_generation_prompt(profile: dict[str, Any], used_names: set[str]) -> str:
-    settings = [
-        f"Channel: {profile.get('channel_name') or profile.get('channel_external_id') or 'Telegram channel'}",
-        f"Language: {profile.get('language') or 'en'}",
-        f"Topic/niche: {profile.get('topic_niche') or 'Choose a useful, timely topic in the channel niche'}",
-        f"Tone: {profile.get('tone') or 'Clear, useful, and natural'}",
-        f"Content format: {profile.get('content_format') or 'Publication-ready Telegram post'}",
-        f"Editorial rules: {profile.get('rules') or 'No clickbait; no placeholders; provide useful substance'}",
-    ]
-    existing_topics = ", ".join(sorted(used_names)) if used_names else "none"
-    return (
-        "You are an autonomous content editor. You own topic ideation and must choose the topic yourself. "
-        "Do not ask the operator for a topic. Avoid previously used topics. Write a complete publication-ready post. "
-        "Never output scripts, styles, placeholders, or an outline. Return exactly:\n"
-        "TOPIC: <short topic name>\n"
-        "POST: <ready-to-publish message>\n\n"
-        "Content profile:\n- " + "\n- ".join(settings) +
-        "\n\nPreviously used topics (avoid these): " + existing_topics
-    )
-
-
-
-
 def approval_keyboard(content_id: int, profile_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -307,49 +227,6 @@ def approval_keyboard(content_id: int, profile_id: int) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="Regenerate", callback_data=build_callback_data("regenerate", profile_id, content_id))],
     ])
-
-async def generate_and_send_profile(bot: Bot, profile: dict[str, Any], admins: list[int], *, force: bool = False) -> bool:
-    try:
-        claimed = await claim_profile_run(profile["id"], force=force)
-    except Exception:
-        logging.exception("Failed to claim profile %s", profile["id"])
-        return False
-    if not claimed:
-        return False
-
-    try:
-        response = await backend_request(
-            "POST",
-            f"/content/profiles/{profile['id']}/generate",
-            json={},
-        )
-        if response.status_code == 409:
-            logging.info("Profile %s generation was rejected by backend", profile["id"])
-            return False
-        response.raise_for_status()
-        run = response.json()
-        content = await fetch_collection(f"/content/contents?workspace_id={profile['workspace_id']}")
-        item = next((row for row in content if row.get("id") == run.get("content_id")), None)
-        if not item:
-            logging.error("Generation run %s created without content %s", run.get("id"), run.get("content_id"))
-            return False
-
-        keyboard = approval_keyboard(int(item["id"]), int(profile["id"]))
-        body = prepare_telegram_content(str(item.get("body") or ""))
-        payload = (
-            f"<b>Profile:</b> {escape(str(profile['name']))}\n"
-            f"<b>Topic:</b> {escape(str(item.get('title') or 'Untitled'))}\n"
-            f"<b>Language:</b> {escape(str(item.get('language') or profile.get('language') or 'en'))}\n\n{body}"
-        )
-        if await send_admin_message(bot, payload, admins, keyboard):
-            await complete_notification(int(item["id"]))
-            return True
-        logging.error("Approval notification delivery failed for content %s; it remains retryable", item["id"])
-        return False
-    except Exception:
-        logging.exception("Autonomous generation failed for profile %s", profile["id"])
-        return False
-
 
 async def retry_pending_notifications(bot: Bot, admins: list[int]) -> None:
     contents = await fetch_collection("/content/contents")
