@@ -8,7 +8,7 @@ This system provides:
 
 - **REST API** (FastAPI backend) for content management, AI generation, channel transformation, and scheduled posting
 - **Admin Dashboard** (Django frontend) for UI management
-- **Telegram Bot** (Aiogram) for approval, operations, and scheduler orchestration
+- **Telegram Bot** (Aiogram) for approval and operator control
 - **PostgreSQL Database** for persistent data storage
 
 ## Architecture
@@ -71,8 +71,8 @@ This system provides:
 - **Features**:
   - `/start` — welcome message with WebApp button
   - Admin commands for manual triggers
-  - Automatic profile schedule checking
-  - Triggers the backend generation pipeline and delivers approval notifications
+  - Durable approval notifications and operator actions
+  - Does not own scheduling or AI generation; the autonomous scheduler runs the backend generation pipeline
   - Publication worker orchestration
 - **Integration**: Uses `SERVICE_ACCOUNT_TOKEN` for backend authentication
 
@@ -116,6 +116,9 @@ Required configuration:
 | `PUBLICATION_RECONCILIATION_POLL_INTERVAL_SECONDS` | `30` | Unknown-provider reconciliation polling interval |
 | `PUBLICATION_LEASE_TIMEOUT_SECONDS` | `900` | Backend lease expiry window |
 | `GENERATION_LEASE_TIMEOUT_SECONDS` | `900` | Generation lease expiry window; active runs heartbeat during provider calls |
+| `SCHEDULER_INTERVAL_SECONDS` | `15` | Autonomous scheduler polling interval |
+| `SCHEDULER_LEASE_TIMEOUT_SECONDS` | `900` | Autonomous scheduler lease expiry window |
+| `MAX_CONCURRENT_GENERATIONS` | `2` | Maximum concurrent autonomous generation workers |
 | `PUBLICATION_MAX_ATTEMPTS` | `5` | Maximum publication attempts |
 | `PUBLICATION_RETRY_DELAY_SECONDS` | `60` | Initial retry delay; exponential backoff is applied |
 | `PUBLICATION_RETRY_MAX_DELAY_SECONDS` | `3600` | Maximum retry delay |
