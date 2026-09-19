@@ -52,3 +52,55 @@ def test_stale_generation_recovery_requeues_profile(monkeypatch):
     profile_response = client.get(f"/content/profiles/{profile['id']}", headers=HEADERS)
     assert profile_response.status_code == 200
     assert profile_response.json()["regeneration_requested"] is True
+
+
+def test_profile_generation_auto_recovers_stale_run_and_reuses_content(monkeypatch):
+    from tests.test_autonomous_generation import create_profile
+
+    profile = create_profile()
+    db = TestingSession()
+    try:
+        content = Content(
+            workspace_id=profile["workspace_id"],
+            profile_id=profile["id"],
+            title="AI generation in progress",
+            language="en",
+            status="draft",
+        )
+        db.add(content)
+        db.flush()
+        prompt = "persisted autonomous prompt"
+        run = GenerationRun(
+            content_id=content.id,
+            provider="fake",
+            status="running",
+            prompt=prompt,
+            created_at=datetime.utcnow() - timedelta(hours=2),
+            lease_heartbeat_at=datetime.utcnow() - timedelta(hours=2),
+        )
+        db.add(run)
+        db.commit()
+        content_id = content.id
+    finally:
+        db.close()
+
+    monkeypatch.setenv("GENERATION_LEASE_TIMEOUT_SECONDS", "60")
+
+    class RecoveringProvider:
+        name = "fake"
+
+        def generate(self, *, prompt, system_message, model):
+            assert prompt == "persisted autonomous prompt"
+            return (
+                "TOPIC: Recovered stale work\n"
+                "POST: The persisted generation task can be retried after a worker restart without creating a second content item."
+            )
+
+    monkeypatch.setattr(
+        "src.app.services.generation_service.get_generation_provider",
+        lambda: RecoveringProvider(),
+    )
+
+    response = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
+    assert response.status_code == 201
+    assert response.json()["content_id"] == content_id
