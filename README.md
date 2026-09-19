@@ -57,7 +57,7 @@ This system provides:
 
 #### Frontend (Django)
 
-- **Port**: 8000 (plain HTTP inside the deployment; terminate public HTTPS at a reverse proxy)
+- **Port**: 3000 on the host, mapped to port 8000 in the container (plain HTTP inside the deployment; terminate public HTTPS at a reverse proxy)
 - **Pages**:
   - Dashboard — backend and database health overview
   - Topics — view and delete AI-generated topics
@@ -91,7 +91,7 @@ The supported product flow is `Content Profile → autonomous AI generation → 
 
 For a fresh self-hosted deployment, copy `.env.example` to `.env`, replace all `CHANGE_ME_*` values, and run `docker compose up -d --build`. The backend applies Alembic migrations on startup and the frontend applies Django migrations before serving the UI. See `docs/GETTING_STARTED.md` for the first-run guide, `docs/SELF_HOSTING.md` for the deployment runbook, and `docs/RELEASE_CHECKLIST.md` before production releases.
 
-The frontend no longer creates a hard-coded default admin account. Set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_EMAIL` in `.env` for the initial operator account.
+The frontend no longer creates a hard-coded default admin account. Set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_EMAIL` in `.env` for the initial operator account. The Compose deployment exposes the frontend at `127.0.0.1:3000` and the backend at `127.0.0.1:8000`; put a reverse proxy in front of the public HTTPS origin.
 
 ## Environment Variables
 
@@ -99,12 +99,12 @@ Required configuration:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_USER` | `postgres` | PostgreSQL username |
-| `DB_PASSWORD` | `postgres` | PostgreSQL password |
+| `DB_USER` | `content_manager` | PostgreSQL username |
+| `DB_PASSWORD` | — | PostgreSQL password |
 | `DB_NAME` | `content_manager` | Database name |
-| `SERVICE_ACCOUNT_TOKEN` | — | Backend authentication token |
+| `APP_ENV` | `production` | Application environment |\n| `BACKEND_SECRET_KEY` | — | Backend secret key |\n| `SERVICE_ACCOUNT_TOKEN` | — | Backend authentication token |
 | `PUBLICATION_WORKER_TOKEN` | — | Dedicated authentication token for publication worker endpoints |
-| `FRONTEND_SECRET_KEY` | — | Django frontend secret key |
+| `FRONTEND_SECRET_KEY` | — | Django frontend secret key |\n| `ADMIN_USERNAME` | — | Initial frontend admin username |\n| `ADMIN_PASSWORD` | — | Initial frontend admin password |\n| `ADMIN_EMAIL` | — | Initial frontend admin email |
 | `BOT_TOKEN` | — | Used as initial value for per-user UI Telegram settings |
 | `ADMINS` | — | Telegram administrator IDs |
 | `TELEGRAM_CALLBACK_SECRET` | — | HMAC secret used to authenticate Telegram approval actions |
@@ -112,7 +112,7 @@ Required configuration:
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model for backend AI generation and transformation |
 | `AI_GENERATION_PROVIDER` | `openai` | Backend generation provider |
 | `AI_TRANSFORMATION_PROVIDER` | `AI_GENERATION_PROVIDER` | Provider for channel-specific transformation |
-| `WEBAPP_URL` | — | Public HTTPS URL opened from Telegram WebApp |
+| `REGISTRATION_ENABLED` | `false` | Whether public registration is enabled |\n| `WEBAPP_URL` | — | Public HTTPS URL opened from Telegram WebApp |\n| `FRONTEND_PUBLIC_URL` | — | Public HTTPS origin used by Django for CSRF validation |\n| `FRONTEND_HOST` | `127.0.0.1` | Hostname used by the frontend container |
 | `SCHEDULE_CHECK_INTERVAL_SECONDS` | `10` | Used as initial value for per-user UI Telegram settings |
 | `PUBLICATION_WORKER_ID` | `telegram:<hostname>` | Stable worker identity used for publication leases |
 | `PUBLICATION_POLL_INTERVAL_SECONDS` | `5` | Publication queue polling interval |
@@ -122,7 +122,7 @@ Required configuration:
 | `GENERATION_LEASE_TIMEOUT_SECONDS` | `900` | Generation lease expiry window; active runs heartbeat during provider calls |
 | `SCHEDULER_INTERVAL_SECONDS` | `15` | Autonomous scheduler polling interval |
 | `SCHEDULER_LEASE_TIMEOUT_SECONDS` | `900` | Autonomous scheduler lease expiry window |
-| `MAX_CONCURRENT_GENERATIONS` | `2` | Maximum concurrent autonomous generation workers |
+| `MAX_CONCURRENT_GENERATIONS` | `2` | Maximum concurrent autonomous generation workers |\n| `PYTHON_VALIDATOR_DIR` | `/var/lib/python-validator` | Shared directory for validator jobs |\n| `PYTHON_VALIDATOR_TIMEOUT_SECONDS` | `8` | Python validator execution timeout |
 | `PUBLICATION_MAX_ATTEMPTS` | `5` | Maximum publication attempts |
 | `PUBLICATION_RETRY_DELAY_SECONDS` | `60` | Initial retry delay; exponential backoff is applied |
 | `PUBLICATION_RETRY_MAX_DELAY_SECONDS` | `3600` | Maximum retry delay |
