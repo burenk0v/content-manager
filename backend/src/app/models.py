@@ -89,6 +89,7 @@ class Content(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     approval_notification_claimed_at = Column(DateTime, nullable=True, index=True)
+    approval_notification_claim_token = Column(String(64), nullable=True)
     approval_notification_sent_at = Column(DateTime, nullable=True, index=True)
     __table_args__ = (
         CheckConstraint("status IN ('draft', 'review', 'approved', 'scheduled', 'publishing', 'published', 'failed', 'archived')", name="ck_contents_status_valid"),

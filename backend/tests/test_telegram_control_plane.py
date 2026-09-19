@@ -65,3 +65,35 @@ def test_regenerate_is_idempotent_and_queues_profile():
     profile_response = client.get(f"/content/profiles/{profile['id']}", headers=HEADERS)
     assert profile_response.status_code == 200
     assert profile_response.json()["regeneration_requested"] is True
+
+
+def test_notification_completion_requires_matching_claim_token():
+    from datetime import datetime
+    from src.app.models import Content
+
+    profile = create_profile()
+    content_id = _create_review_content(profile)
+
+    db = TestingSession()
+    try:
+        content = db.query(Content).filter(Content.id == content_id).one()
+        content.approval_notification_claimed_at = datetime.utcnow()
+        content.approval_notification_claim_token = "owner-token"
+        db.commit()
+    finally:
+        db.close()
+
+    stale = client.post(
+        f"/content/contents/{content_id}/notification-complete",
+        json={"claim_token": "stale-token"},
+        headers=HEADERS,
+    )
+    assert stale.status_code == 409
+
+    success = client.post(
+        f"/content/contents/{content_id}/notification-complete",
+        json={"claim_token": "owner-token"},
+        headers=HEADERS,
+    )
+    assert success.status_code == 200
+    assert success.json()["approval_notification_sent_at"] is not None

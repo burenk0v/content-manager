@@ -214,8 +214,12 @@ async def claim_notification(content_id: int) -> dict[str, Any] | None:
     return response.json()
 
 
-async def complete_notification(content_id: int) -> None:
-    response = await backend_request("POST", f"/content/contents/{content_id}/notification-complete")
+async def complete_notification(content_id: int, claim_token: str) -> None:
+    response = await backend_request(
+        "POST",
+        f"/content/contents/{content_id}/notification-complete",
+        json={"claim_token": claim_token},
+    )
     response.raise_for_status()
 
 
@@ -236,6 +240,10 @@ async def retry_pending_notifications(bot: Bot, admins: list[int]) -> None:
         claimed = await claim_notification(int(item["id"]))
         if not claimed:
             continue
+        claim_token = claimed.get("claim_token")
+        if not claim_token:
+            logging.error("Notification claim for content %s did not return a claim token", item["id"])
+            continue
         profile = await fetch_profile(int(item["profile_id"]))
         if not profile:
             continue
@@ -247,7 +255,7 @@ async def retry_pending_notifications(bot: Bot, admins: list[int]) -> None:
         )
         keyboard = approval_keyboard(int(item["id"]), int(profile["id"]))
         if await send_admin_message(bot, payload, admins, keyboard):
-            await complete_notification(int(item["id"]))
+            await complete_notification(int(item["id"]), claim_token)
 
 
 async def notification_worker(bot: Bot, admins: list[int]) -> None:

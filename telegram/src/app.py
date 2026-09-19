@@ -197,6 +197,7 @@ async def main() -> None:
             await callback.answer("Invalid or expired action.", show_alert=True)
             return
         action, identifiers = verified
+        action_succeeded = False
         try:
             if action == "approve":
                 content_id, profile_id = identifiers
@@ -207,6 +208,7 @@ async def main() -> None:
                 publication = await approve_and_schedule_content(content_id, profile["channel_id"])
                 await callback.answer("Post scheduled for publication.")
                 await bot.send_message(callback.from_user.id, f"Publication #{publication['id']} queued for {profile['name']}.")
+                action_succeeded = True
             elif action == "reject":
                 content_id = identifiers[0]
                 await backend_request(
@@ -215,6 +217,7 @@ async def main() -> None:
                     json={"reason": "Rejected by Telegram operator"},
                 )
                 await callback.answer("Post rejected and returned to draft.")
+                action_succeeded = True
             elif action == "regenerate":
                 profile_id, content_id = identifiers
                 profile = await fetch_profile(profile_id)
@@ -227,14 +230,16 @@ async def main() -> None:
                     json={"reason": "Telegram operator requested regeneration"},
                 )
                 await callback.answer("Regeneration queued for autonomous scheduler.")
+                action_succeeded = True
             else:
                 await callback.answer()
         except Exception:
             logging.exception("Telegram approval action failed: %s", data)
             await callback.answer("Операция не выполнена. Проверьте состояние записи.", show_alert=True)
         finally:
-            with contextlib.suppress(Exception):
-                await bot.delete_message(callback.message.chat.id, callback.message.message_id)
+            if action_succeeded:
+                with contextlib.suppress(Exception):
+                    await bot.delete_message(callback.message.chat.id, callback.message.message_id)
 
     schedule_task = asyncio.create_task(notification_worker(bot, ADMINS))
     publication_task = asyncio.create_task(publication_worker(bot))

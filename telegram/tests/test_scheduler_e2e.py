@@ -34,7 +34,7 @@ async def test_pending_review_notification_is_delivered(monkeypatch):
     async def backend_request(method, path, json=None):
         calls.append((method, path, json))
         if path == "/content/contents/42/notification-claim":
-            return FakeResponse({"id": 42, "status": "review"})
+            return FakeResponse({"id": 42, "status": "review", "claim_token": "claim-42"})
         if path == "/content/contents/42/notification-complete":
             return FakeResponse({"id": 42, "status": "review"})
         raise AssertionError((method, path, json))
@@ -59,7 +59,7 @@ async def test_pending_review_notification_is_delivered(monkeypatch):
     await retry_pending_notifications(bot, [1001])
 
     assert calls[0] == ("POST", "/content/contents/42/notification-claim", None)
-    assert calls[1] == ("POST", "/content/contents/42/notification-complete", None)
+    assert calls[1] == ("POST", "/content/contents/42/notification-complete", {"claim_token": "claim-42"})
     assert bot.calls and bot.calls[0][0] == 1001
     assert "Test topic" in bot.calls[0][1]
     assert bot.calls[0][3] is not None

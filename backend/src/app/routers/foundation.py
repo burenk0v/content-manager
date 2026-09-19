@@ -88,6 +88,10 @@ class ContentVersionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ContentNotificationComplete(BaseModel):
+    claim_token: str = Field(..., min_length=1, max_length=64)
+
+
 class PublicationCreate(BaseModel):
     content_id: int
     channel_id: int
@@ -292,7 +296,7 @@ def list_contents(workspace_id: Optional[int] = None, db: Session = Depends(get_
     return query.order_by(Content.created_at.asc(), Content.id.asc()).all()
 
 
-@router.post("/contents/{content_id}/notification-claim", response_model=ContentOut, dependencies=[Depends(require_service_token)])
+@router.post("/contents/{content_id}/notification-claim", dependencies=[Depends(require_service_token)])
 def claim_content_notification(content_id: int, db: Session = Depends(get_db)):
     now = datetime.utcnow()
     content = db.query(Content).filter(Content.id == content_id).with_for_update().first()
@@ -300,19 +304,30 @@ def claim_content_notification(content_id: int, db: Session = Depends(get_db)):
         raise HTTPException(409, "Content notification is not available")
     if content.approval_notification_claimed_at and content.approval_notification_claimed_at > now - timedelta(minutes=5):
         raise HTTPException(409, "Content notification is already claimed")
+    claim_token = uuid.uuid4().hex
     content.approval_notification_claimed_at = now
+    content.approval_notification_claim_token = claim_token
     db.commit()
-    db.refresh(content)
-    return content
+    return {"content_id": content.id, "claim_token": claim_token}
 
 
 @router.post("/contents/{content_id}/notification-complete", response_model=ContentOut, dependencies=[Depends(require_service_token)])
-def complete_content_notification(content_id: int, db: Session = Depends(get_db)):
-    content = db.query(Content).filter(Content.id == content_id).first()
-    if not content or content.status != "review":
-        raise HTTPException(409, "Content notification is not available")
+def complete_content_notification(
+    content_id: int,
+    payload: ContentNotificationComplete,
+    db: Session = Depends(get_db),
+):
+    content = db.query(Content).filter(Content.id == content_id).with_for_update().first()
+    if (
+        not content
+        or content.status != "review"
+        or not content.approval_notification_claim_token
+        or not hmac.compare_digest(content.approval_notification_claim_token, payload.claim_token)
+    ):
+        raise HTTPException(409, "Content notification claim is invalid or expired")
     content.approval_notification_sent_at = datetime.utcnow()
     content.approval_notification_claimed_at = None
+    content.approval_notification_claim_token = None
     db.commit()
     db.refresh(content)
     return content

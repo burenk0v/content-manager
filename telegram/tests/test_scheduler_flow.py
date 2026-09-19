@@ -23,7 +23,7 @@ async def test_notification_is_completed_only_after_delivery(monkeypatch):
     async def backend_request(method, path, json=None):
         calls.append((method, path, json))
         if path.endswith("/notification-claim"):
-            return FakeResponse({"id": 601, "status": "review"})
+            return FakeResponse({"id": 601, "status": "review", "claim_token": "claim-601"})
         if path.endswith("/notification-complete"):
             return FakeResponse({"id": 601, "status": "review"})
         raise AssertionError((method, path, json))
@@ -54,8 +54,8 @@ async def test_notification_is_completed_only_after_delivery(monkeypatch):
     await scheduler.retry_pending_notifications(object(), [42])
 
     assert ("POST", "/content/contents/601/notification-claim", None) in calls
-    assert ("POST", "/content/contents/601/notification-complete", None) in calls
-    assert calls.index(("send", [42], ("keyboard", 601, 7))) < calls.index(("POST", "/content/contents/601/notification-complete", None))
+    assert ("POST", "/content/contents/601/notification-complete", {"claim_token": "claim-601"}) in calls
+    assert calls.index(("send", [42], ("keyboard", 601, 7))) < calls.index(("POST", "/content/contents/601/notification-complete", {"claim_token": "claim-601"}))
 
 
 @pytest.mark.asyncio
@@ -65,7 +65,7 @@ async def test_notification_stays_retryable_when_delivery_fails(monkeypatch):
 
     async def backend_request(method, path, json=None):
         if path.endswith("/notification-claim"):
-            return FakeResponse({"id": 601, "status": "review"})
+            return FakeResponse({"id": 601, "status": "review", "claim_token": "claim-601"})
         if path.endswith("/notification-complete"):
             completed.append(601)
             return FakeResponse({"id": 601, "status": "review"})
