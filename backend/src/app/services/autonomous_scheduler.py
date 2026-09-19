@@ -5,6 +5,7 @@ import os
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
@@ -34,6 +35,10 @@ def _int_env(name: str, default: int, minimum: int, maximum: int) -> int:
 
 def scheduler_interval_seconds() -> int:
     return _int_env("SCHEDULER_INTERVAL_SECONDS", DEFAULT_SCHEDULER_INTERVAL_SECONDS, 1, 3600)
+
+
+def scheduler_max_concurrent_generations() -> int:
+    return _int_env("MAX_CONCURRENT_GENERATIONS", 2, 1, 16)
 
 
 def scheduler_lease_timeout_seconds() -> int:
@@ -252,28 +257,46 @@ def scheduler_tick() -> int:
         db.close()
 
     claimed = 0
+    jobs: list[tuple[int, str]] = []
+    max_concurrent = scheduler_max_concurrent_generations()
     for (profile_id,) in profiles:
+        if len(jobs) >= max_concurrent:
+            break
         claim_db = SessionLocal()
         try:
             token = claim_due_profile(claim_db, profile_id)
         except Exception:
             claim_db.rollback()
             token = None
+            import logging
+            logging.getLogger(__name__).exception("Failed to claim scheduler profile %s", profile_id)
         finally:
             claim_db.close()
-        if not token:
-            continue
-        claimed += 1
-        run_profile(profile_id, token)
-    return claimed
+        if token:
+            jobs.append((profile_id, token))
+
+    if not jobs:
+        return 0
+
+    with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="autonomous-generation") as executor:
+        futures = [executor.submit(run_profile, profile_id, token) for profile_id, token in jobs]
+        for future in futures:
+            try:
+                future.result()
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("Autonomous scheduler worker failed")
+    return len(jobs)
 
 
 def run_forever() -> None:
+    import logging
+    logger = logging.getLogger(__name__)
     while True:
         try:
             scheduler_tick()
         except Exception:
-            pass
+            logger.exception("Autonomous scheduler tick failed")
         time.sleep(scheduler_interval_seconds())
 
 
