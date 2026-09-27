@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from providers.base import PermanentPublicationError, PublicationContext
+from providers.base import AmbiguousPublicationError, PermanentPublicationError, PublicationContext
 from providers.linkedin import LinkedInPublisher
 
 
@@ -77,5 +77,5 @@ async def test_server_error_is_ambiguous(context, monkeypatch):
     monkeypatch.setattr("providers.linkedin.httpx.AsyncClient", lambda **kwargs: client)
 
     publisher = LinkedInPublisher("secret")
-    with pytest.raises(Exception, match="outcome is unknown"):
+    with pytest.raises(AmbiguousPublicationError, match="outcome is unknown"):
         await publisher.publish(context)
