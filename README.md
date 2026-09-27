@@ -126,6 +126,8 @@ Required configuration:
 | `PUBLICATION_MAX_ATTEMPTS` | `5` | Maximum publication attempts |
 | `PUBLICATION_RETRY_DELAY_SECONDS` | `60` | Initial retry delay; exponential backoff is applied |
 | `PUBLICATION_RETRY_MAX_DELAY_SECONDS` | `3600` | Maximum retry delay |
+| `LINKEDIN_ACCESS_TOKEN` | — | LinkedIn OAuth access token with `w_member_social` for personal-profile publishing |
+| `LINKEDIN_VERSION` | `202609` | LinkedIn API version in `YYYYMM` format |
 
 ## Documentation
 
