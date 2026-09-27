@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .base import ProviderCapabilities, ProviderReconciler, Publisher
+from .linkedin import LinkedInPublisher
 from .telegram import TelegramPublisher
 
 
@@ -58,6 +59,7 @@ class ProviderRegistry:
 def build_default_registry() -> ProviderRegistry:
     registry = ProviderRegistry()
     registry.register("telegram", TelegramPublisher)
+    registry.register("linkedin", LinkedInPublisher)
     return registry
 
 
