@@ -187,7 +187,7 @@ Provider failures are classified into three operational outcomes:
 
 The backend remains authoritative for retry limits, scheduling, leases, and publication state. Provider adapters must not implement their own retry policy.
 
-Telegram currently supports publication but does not provide a safe provider-side reconciliation mechanism, so ambiguous Telegram deliveries remain available for manual reconciliation rather than being automatically duplicated.
+Telegram currently supports publication but does not provide a safe provider-side reconciliation mechanism, so ambiguous Telegram deliveries remain available for manual reconciliation rather than being automatically duplicated. LinkedIn personal-profile text publishing is supported through the same provider worker; it uses the channel external ID as the member URN and the configured OAuth access token.
 
 ## Key Implementation Notes
 
