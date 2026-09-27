@@ -23,6 +23,8 @@ Configuration is supplied through .env and passed to the services by Docker Comp
 | FRONTEND_PUBLIC_URL | yes | Public HTTPS frontend origin |
 | OPENAI_API_KEY | yes | Current AI provider credential |
 | OPENAI_MODEL | no | AI model, default gpt-4o-mini |
+| LINKEDIN_ACCESS_TOKEN | no | LinkedIn OAuth access token with `w_member_social` for personal-profile publishing |
+| LINKEDIN_VERSION | no | LinkedIn API version in `YYYYMM` format, default `202609` |
 
 ## AI runtime
 
@@ -40,6 +42,9 @@ Configuration is supplied through .env and passed to the services by Docker Comp
 - PUBLICATION_RECONCILIATION_POLL_INTERVAL_SECONDS controls ambiguous-outcome reconciliation polling.
 - PUBLICATION_LEASE_TIMEOUT_SECONDS controls publication lease expiry.
 - PUBLICATION_MAX_ATTEMPTS, PUBLICATION_RETRY_DELAY_SECONDS, and PUBLICATION_RETRY_MAX_DELAY_SECONDS control publication retries.
+- A LinkedIn channel uses `platform=linkedin` and `external_id=urn:li:person:<member-id>`.
+- LINKEDIN_ACCESS_TOKEN is passed only to the publication worker and is never included in publication payloads or logs.
+- The LinkedIn provider publishes text-only public posts through the Posts API with `w_member_social`. Network/5xx failures are treated as ambiguous rather than blindly retried, because the provider may have accepted the side effect.
 
 ## Security
 
