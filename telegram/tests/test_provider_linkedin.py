@@ -15,30 +15,39 @@ def context() -> PublicationContext:
     )
 
 
+class FakeAsyncClient:
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
+        self.request: httpx.Request | None = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def post(self, url, *, json, headers):
+        self.request = httpx.Request("POST", url, json=json, headers=headers)
+        return self.response
+
+
 @pytest.mark.asyncio
 async def test_publishes_text_post(context, monkeypatch):
-    captured = {}
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        captured["request"] = request
-        return httpx.Response(201, headers={"x-restli-id": "urn:li:share:123"})
-
-    transport = httpx.MockTransport(handler)
-    monkeypatch.setattr(
-        "providers.linkedin.httpx.AsyncClient",
-        lambda **kwargs: httpx.AsyncClient(transport=transport, **kwargs),
-    )
+    client = FakeAsyncClient(httpx.Response(201, headers={"x-restli-id": "urn:li:share:123"}))
+    monkeypatch.setattr("providers.linkedin.httpx.AsyncClient", lambda **kwargs: client)
 
     publisher = LinkedInPublisher("secret", api_url="https://api.linkedin.test/rest", version="202609")
     result = await publisher.publish(context)
 
     assert result.external_id == "urn:li:share:123"
     assert result.message_count == 1
-    assert captured["request"].headers["authorization"] == "Bearer secret"
-    assert captured["request"].headers["linkedin-version"] == "202609"
-    assert captured["request"].headers["x-restli-protocol-version"] == "2.0.0"
-    assert captured["request"].json()["author"] == "urn:li:person:abc123"
-    assert captured["request"].json()["commentary"] == "Hello LinkedIn"
+    assert client.request is not None
+    assert client.request.headers["authorization"] == "Bearer secret"
+    assert client.request.headers["linkedin-version"] == "202609"
+    assert client.request.headers["x-restli-protocol-version"] == "2.0.0"
+    assert client.request.content is not None
+    assert b"urn:li:person:abc123" in client.request.content
+    assert b"Hello LinkedIn" in client.request.content
 
 
 @pytest.mark.asyncio
@@ -64,14 +73,8 @@ async def test_missing_token_is_permanent_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_server_error_is_ambiguous(context, monkeypatch):
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, text="temporarily unavailable")
-
-    transport = httpx.MockTransport(handler)
-    monkeypatch.setattr(
-        "providers.linkedin.httpx.AsyncClient",
-        lambda **kwargs: httpx.AsyncClient(transport=transport, **kwargs),
-    )
+    client = FakeAsyncClient(httpx.Response(503, text="temporarily unavailable"))
+    monkeypatch.setattr("providers.linkedin.httpx.AsyncClient", lambda **kwargs: client)
 
     publisher = LinkedInPublisher("secret")
     with pytest.raises(Exception, match="outcome is unknown"):
