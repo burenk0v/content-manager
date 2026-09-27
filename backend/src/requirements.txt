@@ -7,6 +7,7 @@ sqlalchemy
 alembic
 pydantic
 psycopg2-binary
+psycopg[binary]
 pytest
 pytest-asyncio
 httpx
