@@ -31,7 +31,7 @@ class LinkedInPublisher:
         api_url: str = LINKEDIN_API_URL,
         version: str = LINKEDIN_VERSION,
     ) -> None:
-        self.access_token = access_token or LINKEDIN_ACCESS_TOKEN
+        self.access_token = access_token or os.getenv("LINKEDIN_ACCESS_TOKEN")
         self.api_url = api_url.rstrip("/")
         self.version = version
         if not self.access_token:
