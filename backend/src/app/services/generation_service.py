@@ -413,13 +413,16 @@ def _select_unique_topic(
                 "Choose a different topic. Do not repeat or closely rephrase it."
             )
 
-        topic = _parse_topic_output(
-            provider.generate(
+        try:
+            generated_topic = provider.generate(
                 prompt=prompt,
                 system_message="You select unique publication topics. Return only the requested topic line.",
                 model=model,
             )
-        )
+        except GenerationError as exc:
+            raise GenerationProviderFailure(str(exc)) from exc
+
+        topic = _parse_topic_output(generated_topic)
         duplicate = find_duplicate_topic(topic, topic_memory)
         if duplicate is None:
             return topic
