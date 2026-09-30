@@ -44,6 +44,12 @@ def topic_similarity(left: str, right: str) -> float:
 
 
 def load_topic_memory(db: Session, profile_id: int) -> list[tuple[str, str]]:
+    """Return the complete topic history for a profile.
+
+    Topic uniqueness is a long-term editorial constraint, so the history must
+    not be truncated to the most recent N posts. The temporary generation
+    placeholder is excluded because it is not a real topic.
+    """
     rows = (
         db.query(Content.title, Content.status)
         .filter(
@@ -52,15 +58,20 @@ def load_topic_memory(db: Session, profile_id: int) -> list[tuple[str, str]]:
             Content.title != "AI generation in progress",
         )
         .order_by(Content.created_at.desc(), Content.id.desc())
-        .limit(500)
         .all()
     )
     return [(str(title).strip(), str(status)) for title, status in rows if str(title).strip()]
 
 
-def find_duplicate_topic(topic: str, memory: list[tuple[str, str]], threshold: float = 0.65) -> tuple[str, str, float] | None:
+def find_duplicate_topic(
+    topic: str,
+    memory: list[tuple[str, str]],
+    threshold: float = 0.65,
+) -> tuple[str, str, float] | None:
+    """Find an exact, contained, or close semantic rephrasing of a topic."""
+    normalized = normalize_topic(topic)
     for existing, status in memory:
-        score = topic_similarity(topic, existing)
+        score = topic_similarity(normalized, existing)
         if score >= threshold:
             return existing, status, score
     return None
