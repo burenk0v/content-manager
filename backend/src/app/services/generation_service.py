@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__
 
 from datetime import datetime, timedelta
 import os
@@ -373,9 +373,10 @@ def _select_unique_topic(
     topic_memory: list[tuple[str, str]],
     *,
     model: str | None = None,
+    initial_prompt: str | None = None,
 ) -> str:
     provider = get_generation_provider()
-    prompt = build_profile_generation_prompt(profile)
+    prompt = initial_prompt or build_profile_generation_prompt(profile)
     duplicate_topic: str | None = None
 
     for _attempt in range(MAX_TOPIC_SELECTION_ATTEMPTS):
@@ -396,6 +397,8 @@ def _select_unique_topic(
             )
         except GenerationError as exc:
             raise GenerationProviderFailure(str(exc)) from exc
+        except Exception as exc:
+            raise GenerationProviderFailure("Generation failed unexpectedly") from exc
 
         topic = _parse_topic_output(generated_topic)
         duplicate = find_duplicate_topic(topic, topic_memory)
@@ -484,22 +487,51 @@ def generate_profile_content(
         db.add(content)
         db.flush()
 
-    topic = _select_unique_topic(profile, topic_memory, model=model)
+    try:
+        topic = _select_unique_topic(
+            profile,
+            topic_memory,
+            model=model,
+            initial_prompt=recovery_prompt,
+        )
+    except GenerationProviderFailure as exc:
+        profile.regeneration_requested = True
+        failed_run = GenerationRun(
+            content_id=content.id,
+            provider="configured",
+            model=model,
+            status="failed",
+            prompt=recovery_prompt or build_profile_generation_prompt(profile),
+            error_message=str(exc)[:4000],
+            completed_at=datetime.utcnow(),
+            lease_heartbeat_at=None,
+        )
+        db.add(failed_run)
+        db.flush()
+        audit(
+            db,
+            content.workspace_id,
+            "generation_run",
+            failed_run.id,
+            "failed",
+            event_type="content.generation_failed",
+            metadata={"provider": failed_run.provider, "model": failed_run.model, "phase": "topic_selection"},
+        )
+        db.commit()
+        raise
 
     def transform_generated(generated: str) -> str:
         value = _parse_post_output(generated)
         quality = validate_post(value)
         if not quality.valid:
-            raise GenerationProviderFailure(
-                f"python_quality: {format_quality_failure(quality)}"
-            )
+            raise GenerationProviderFailure(f"python_quality: {format_quality_failure(quality)}")
         return value
 
     try:
         run = generate_content(
             db,
             content.id,
-            prompt=recovery_prompt or build_profile_post_prompt(profile, topic),
+            prompt=build_profile_post_prompt(profile, topic),
             system_message="You are an autonomous content editor. Produce complete publication-ready content.",
             model=model,
             transform_generated=transform_generated,
@@ -515,11 +547,7 @@ def generate_profile_content(
     content.status = "review"
     content.updated_at = datetime.utcnow()
     audit(
-        db,
-        content.workspace_id,
-        "content",
-        content.id,
-        "status_changed",
+        db, content.workspace_id, "content", content.id, "status_changed",
         event_type="content.ready_for_approval",
         metadata={"from": previous_status, "to": "review", "generation_run_id": run.id},
     )
