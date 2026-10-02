@@ -9,13 +9,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.app.db import SessionLocal
-
 from src.app.ai_generation import GenerationError, get_generation_provider
 from src.app.audit import audit
 from src.app.domain.content_state_machine import InvalidContentTransition, transition
 from src.app.models import Content, ContentProfile, ContentVersion, GenerationRun
-from src.app.services.python_quality import extract_python_blocks, format_quality_failure, validate_post
-from src.app.services.python_sandbox import PythonSandboxError, execute_python_blocks
+from src.app.services.python_quality import format_quality_failure, validate_post
 from src.app.services.topic_memory import find_duplicate_topic, load_topic_memory
 
 
@@ -34,6 +32,7 @@ class GenerationProviderFailure(Exception):
 DEFAULT_GENERATION_LEASE_TIMEOUT_SECONDS = 900
 MIN_GENERATION_LEASE_TIMEOUT_SECONDS = 60
 MAX_GENERATION_LEASE_TIMEOUT_SECONDS = 86400
+MAX_TOPIC_SELECTION_ATTEMPTS = 5
 
 
 def generation_lease_timeout_seconds() -> int:
@@ -320,9 +319,6 @@ def list_generations(db: Session, content_id: int) -> list[GenerationRun]:
     )
 
 
-MAX_TOPIC_SELECTION_ATTEMPTS = 5
-
-
 def _parse_topic_output(text: str) -> str:
     import re
 
@@ -373,10 +369,9 @@ def _select_unique_topic(
     topic_memory: list[tuple[str, str]],
     *,
     model: str | None = None,
-    initial_prompt: str | None = None,
 ) -> str:
     provider = get_generation_provider()
-    prompt = initial_prompt or build_profile_generation_prompt(profile)
+    prompt = build_profile_generation_prompt(profile)
     duplicate_topic: str | None = None
 
     for _attempt in range(MAX_TOPIC_SELECTION_ATTEMPTS):
@@ -388,7 +383,6 @@ def _select_unique_topic(
                 "Choose a genuinely different topic. Do not repeat or closely rephrase it. "
                 "Return only the new TOPIC line."
             )
-
         try:
             generated_topic = provider.generate(
                 prompt=prompt,
@@ -404,7 +398,6 @@ def _select_unique_topic(
         duplicate = find_duplicate_topic(topic, topic_memory)
         if duplicate is None:
             return topic
-
         duplicate_topic = duplicate[0]
 
     raise GenerationProviderFailure(
@@ -438,13 +431,11 @@ def generate_profile_content(
     )
     if not profile:
         raise GenerationNotFound
-
     if profile.scheduler_lease_token and profile.scheduler_lease_token != scheduler_lease_token:
         raise GenerationConflict("Profile is owned by the autonomous scheduler")
 
     recover_stale_generations(db)
     topic_memory = load_topic_memory(db, profile.id)
-
     recoverable = (
         db.query(Content)
         .filter(
@@ -457,7 +448,6 @@ def generate_profile_content(
     )
 
     content = None
-    recovery_prompt = None
     for candidate in recoverable:
         latest_run = (
             db.query(GenerationRun)
@@ -471,8 +461,6 @@ def generate_profile_content(
             raise GenerationConflict("Profile already has a generation run in progress")
         if latest_run.status == "failed":
             content = candidate
-            if latest_run.prompt and not (latest_run.error_message or "").startswith("duplicate_topic:"):
-                recovery_prompt = latest_run.prompt
             break
 
     if content is None:
@@ -488,12 +476,7 @@ def generate_profile_content(
         db.flush()
 
     try:
-        topic = _select_unique_topic(
-            profile,
-            topic_memory,
-            model=model,
-            initial_prompt=recovery_prompt,
-        )
+        topic = _select_unique_topic(profile, topic_memory, model=model)
     except GenerationProviderFailure as exc:
         profile.regeneration_requested = True
         failed_run = GenerationRun(
@@ -501,7 +484,7 @@ def generate_profile_content(
             provider="configured",
             model=model,
             status="failed",
-            prompt=recovery_prompt or build_profile_generation_prompt(profile),
+            prompt=build_profile_generation_prompt(profile),
             error_message=str(exc)[:4000],
             completed_at=datetime.utcnow(),
             lease_heartbeat_at=None,
@@ -547,7 +530,11 @@ def generate_profile_content(
     content.status = "review"
     content.updated_at = datetime.utcnow()
     audit(
-        db, content.workspace_id, "content", content.id, "status_changed",
+        db,
+        content.workspace_id,
+        "content",
+        content.id,
+        "status_changed",
         event_type="content.ready_for_approval",
         metadata={"from": previous_status, "to": "review", "generation_run_id": run.id},
     )
