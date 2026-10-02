@@ -275,7 +275,7 @@ def test_autonomous_generation_retries_duplicate_topic_until_unique(monkeypatch)
     assert len(calls) == 5
     assert "Asyncio gather for parallel tasks" not in calls[2]
     assert "Asyncio gather for parallel tasks" in calls[3]
-    assert calls[4].startswith("POST:")
+    assert "Selected topic: Python structural pattern matching" in calls[4]
 
     contents = client.get(f"/content/contents?workspace_id={profile['workspace_id']}", headers=HEADERS)
     titles = [item["title"] for item in contents.json()]
