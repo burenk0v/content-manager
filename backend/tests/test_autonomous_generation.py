@@ -272,10 +272,10 @@ def test_autonomous_generation_retries_duplicate_topic_until_unique(monkeypatch)
     second = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert second.status_code == 201
 
-    assert len(calls) == 4
-    assert "Asyncio gather for parallel tasks" in calls[1]
+    assert len(calls) == 5
     assert "Asyncio gather for parallel tasks" in calls[2]
     assert calls[3] != calls[2]
+    assert calls[4].startswith("POST:")
 
     contents = client.get(f"/content/contents?workspace_id={profile['workspace_id']}", headers=HEADERS)
     titles = [item["title"] for item in contents.json()]
