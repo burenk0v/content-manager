@@ -1,4 +1,4 @@
-from __future__
+from __future__ import annotations
 
 from datetime import datetime, timedelta
 import os
@@ -9,11 +9,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.app.db import SessionLocal
+
 from src.app.ai_generation import GenerationError, get_generation_provider
 from src.app.audit import audit
 from src.app.domain.content_state_machine import InvalidContentTransition, transition
 from src.app.models import Content, ContentProfile, ContentVersion, GenerationRun
-from src.app.services.python_quality import format_quality_failure, validate_post
+from src.app.services.python_quality import extract_python_blocks, format_quality_failure, validate_post
+from src.app.services.python_sandbox import PythonSandboxError, execute_python_blocks
 from src.app.services.topic_memory import find_duplicate_topic, load_topic_memory
 
 
@@ -32,7 +34,6 @@ class GenerationProviderFailure(Exception):
 DEFAULT_GENERATION_LEASE_TIMEOUT_SECONDS = 900
 MIN_GENERATION_LEASE_TIMEOUT_SECONDS = 60
 MAX_GENERATION_LEASE_TIMEOUT_SECONDS = 86400
-MAX_TOPIC_SELECTION_ATTEMPTS = 5
 
 
 def generation_lease_timeout_seconds() -> int:
@@ -319,23 +320,39 @@ def list_generations(db: Session, content_id: int) -> list[GenerationRun]:
     )
 
 
-def _parse_topic_output(text: str) -> str:
+def _parse_autonomous_output(text: str) -> tuple[str, str]:
     import re
 
     value = (text or "").strip()
-    match = re.search(r"^TOPIC:\s*(.+?)\s*$", value, re.I | re.M)
+    match = re.search(r"TOPIC:\s*(.+?)\s*POST:\s*(.+)", value, re.S | re.I)
     if not match:
-        raise GenerationProviderFailure("AI provider returned an invalid topic format")
-    topic = match.group(1).strip().strip('"').strip("'")
-    if not topic:
-        raise GenerationProviderFailure("AI provider returned an empty topic")
-    return topic[:200]
+        match = re.search(r"TOPIC:\s*(.+?)\s*MESSAGE:\s*(.+)", value, re.S | re.I)
+    if match:
+        topic, body = match.group(1).strip().strip('"').strip("'"), match.group(2).strip()
+    else:
+        lines = value.splitlines()
+        if len(lines) >= 2:
+            topic, body = lines[0].strip().strip('"').strip("'"), "\n".join(lines[1:]).strip()
+        else:
+            raise GenerationProviderFailure("AI provider returned an invalid autonomous content format")
+    if not topic or not body:
+        raise GenerationProviderFailure("AI provider returned empty autonomous content")
+    if len(body) < 20 or len(body) > 12000:
+        raise GenerationProviderFailure("AI provider returned content outside the supported length")
+    if re.search(r"<\/?(?:script|style|iframe)\b", body, re.I):
+        raise GenerationProviderFailure("AI provider returned unsafe content")
+    if re.search(r"\[(?:insert|add|write|replace)|\{\{.*?\}\}", body, re.I):
+        raise GenerationProviderFailure("AI provider returned placeholder content")
+    return topic[:200], body
+
+
+MAX_TOPIC_SELECTION_ATTEMPTS = 5
 
 
 def build_profile_generation_prompt(profile: ContentProfile) -> str:
     return (
         "You are an autonomous content editor. Choose exactly one topic for a publication. "
-        "Do not write the publication yet. Never ask the operator for a topic. Return exactly:\n"
+        "Do not write the publication yet. Return exactly one line in this format:\n"
         "TOPIC: <short topic name>\n\n"
         f"Channel: {profile.channel.name or profile.channel.external_id}\n"
         f"Language: {profile.language}\n"
@@ -350,7 +367,7 @@ def build_profile_post_prompt(profile: ContentProfile, topic: str) -> str:
     return (
         "You are an autonomous content editor. Create one complete publication-ready post "
         "for the configured profile using exactly the selected topic below. "
-        "Do not change the topic and do not ask the operator for another topic. "
+        "Do not change the topic and do not ask the operator for one. "
         "Never output scripts, styles, placeholders, or an outline. "
         "Any Python code fence must be syntactically valid. Return exactly:\n"
         "POST: <ready-to-publish message>\n\n"
@@ -364,6 +381,19 @@ def build_profile_post_prompt(profile: ContentProfile, topic: str) -> str:
     )
 
 
+def _parse_topic_output(text: str) -> str:
+    import re
+
+    value = (text or "").strip()
+    match = re.search(r"^TOPIC:\s*(.+?)\s*$", value, re.I | re.M)
+    if not match:
+        raise GenerationProviderFailure("AI provider returned an invalid topic format")
+    topic = match.group(1).strip().strip('"').strip("'")
+    if not topic:
+        raise GenerationProviderFailure("AI provider returned an empty topic")
+    return topic[:200]
+
+
 def _select_unique_topic(
     profile: ContentProfile,
     topic_memory: list[tuple[str, str]],
@@ -372,49 +402,33 @@ def _select_unique_topic(
 ) -> str:
     provider = get_generation_provider()
     prompt = build_profile_generation_prompt(profile)
-    duplicate_topic: str | None = None
+    last_duplicate: str | None = None
 
     for _attempt in range(MAX_TOPIC_SELECTION_ATTEMPTS):
-        if duplicate_topic is not None:
+        if last_duplicate is not None:
             prompt = (
                 build_profile_generation_prompt(profile)
                 + "\n\n"
-                f'The topic "{duplicate_topic}" was already used. '
-                "Choose a genuinely different topic. Do not repeat or closely rephrase it. "
-                "Return only the new TOPIC line."
+                f"The previously generated topic \"{last_duplicate}\" was already used. "
+                "Choose a different topic. Do not repeat or closely rephrase it."
             )
-        try:
-            generated_topic = provider.generate(
+
+        topic = _parse_topic_output(
+            provider.generate(
                 prompt=prompt,
                 system_message="You select unique publication topics. Return only the requested topic line.",
                 model=model,
             )
-        except GenerationError as exc:
-            raise GenerationProviderFailure(str(exc)) from exc
-        except Exception as exc:
-            raise GenerationProviderFailure("Generation failed unexpectedly") from exc
-
-        topic = _parse_topic_output(generated_topic)
+        )
         duplicate = find_duplicate_topic(topic, topic_memory)
         if duplicate is None:
             return topic
-        duplicate_topic = duplicate[0]
+
+        last_duplicate = duplicate[0]
 
     raise GenerationProviderFailure(
         f"Unable to select a unique topic after {MAX_TOPIC_SELECTION_ATTEMPTS} attempts"
     )
-
-
-def _parse_post_output(text: str) -> str:
-    import re
-
-    value = (text or "").strip()
-    match = re.search(r"^POST:\s*(.+)", value, re.I | re.S)
-    if match:
-        value = match.group(1).strip()
-    if not value:
-        raise GenerationProviderFailure("AI provider returned an empty post")
-    return value
 
 
 def generate_profile_content(
@@ -431,11 +445,14 @@ def generate_profile_content(
     )
     if not profile:
         raise GenerationNotFound
+
     if profile.scheduler_lease_token and profile.scheduler_lease_token != scheduler_lease_token:
         raise GenerationConflict("Profile is owned by the autonomous scheduler")
 
     recover_stale_generations(db)
+
     topic_memory = load_topic_memory(db, profile.id)
+
     recoverable = (
         db.query(Content)
         .filter(
@@ -446,7 +463,6 @@ def generate_profile_content(
         .order_by(Content.created_at.asc(), Content.id.asc())
         .all()
     )
-
     content = None
     for candidate in recoverable:
         latest_run = (
@@ -477,34 +493,15 @@ def generate_profile_content(
 
     try:
         topic = _select_unique_topic(profile, topic_memory, model=model)
-    except GenerationProviderFailure as exc:
+    except GenerationProviderFailure:
         profile.regeneration_requested = True
-        failed_run = GenerationRun(
-            content_id=content.id,
-            provider="configured",
-            model=model,
-            status="failed",
-            prompt=build_profile_generation_prompt(profile),
-            error_message=str(exc)[:4000],
-            completed_at=datetime.utcnow(),
-            lease_heartbeat_at=None,
-        )
-        db.add(failed_run)
         db.flush()
-        audit(
-            db,
-            content.workspace_id,
-            "generation_run",
-            failed_run.id,
-            "failed",
-            event_type="content.generation_failed",
-            metadata={"provider": failed_run.provider, "model": failed_run.model, "phase": "topic_selection"},
-        )
-        db.commit()
         raise
 
     def transform_generated(generated: str) -> str:
-        value = _parse_post_output(generated)
+        value = (generated or "").strip()
+        if value.upper().startswith("POST:"):
+            value = value[5:].strip()
         quality = validate_post(value)
         if not quality.valid:
             raise GenerationProviderFailure(f"python_quality: {format_quality_failure(quality)}")
