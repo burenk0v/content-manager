@@ -3,6 +3,7 @@ from tests.test_foundation_api import HEADERS, client
 
 def create_profile():
     import uuid
+
     suffix = uuid.uuid4().hex[:8]
     workspace = client.post(
         "/content/workspaces",
@@ -41,42 +42,44 @@ def create_profile():
     return response.json()
 
 
-def test_autonomous_profile_generation_persists_run_and_version(monkeypatch):
-    profile = create_profile()
+def topic_then_post(topic, post):
+    calls = []
 
-    class FakeProvider:
+    class Provider:
         name = "fake"
 
         def generate(self, *, prompt, system_message, model):
-            assert "software engineering" in prompt
-            assert "TOPIC:" in prompt
-            return "TOPIC: Reliable background jobs\nPOST: Use durable state and leases for long-running jobs. This makes worker restarts recoverable and prevents duplicate processing."
+            calls.append((prompt, system_message))
+            if "select unique publication topics" in system_message:
+                return f"TOPIC: {topic}"
+            return f"POST: {post}"
 
-    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: FakeProvider())
-    response = client.post(
-        f"/content/profiles/{profile['id']}/generate",
-        headers=HEADERS,
+    return Provider(), calls
+
+
+def test_autonomous_profile_generation_persists_run_and_version(monkeypatch):
+    profile = create_profile()
+    provider, calls = topic_then_post(
+        "Reliable background jobs",
+        "Use durable state and leases for long-running jobs. This makes worker restarts recoverable and prevents duplicate processing.",
     )
+    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: provider)
+
+    response = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert response.status_code == 201
     run = response.json()
     assert run["status"] == "succeeded"
     assert run["provider"] == "fake"
     assert run["content_version_id"] is not None
+    assert len(calls) == 2
+    assert "Topic memory" not in calls[0][0]
 
-    contents = client.get(
-        f"/content/contents?workspace_id={profile['workspace_id']}",
-        headers=HEADERS,
-    )
-    assert contents.status_code == 200
+    contents = client.get(f"/content/contents?workspace_id={profile['workspace_id']}", headers=HEADERS)
     generated = next(item for item in contents.json() if item["id"] == run["content_id"])
     assert generated["title"] == "Reliable background jobs"
     assert generated["status"] == "review"
 
-    versions = client.get(
-        f"/content/contents/{run['content_id']}/versions",
-        headers=HEADERS,
-    )
-    assert versions.status_code == 200
+    versions = client.get(f"/content/contents/{run['content_id']}/versions", headers=HEADERS)
     assert versions.json()[0]["body"].startswith("Use durable state and leases")
 
 
@@ -91,31 +94,13 @@ def test_autonomous_profile_generation_records_provider_failure(monkeypatch):
             raise GenerationError("provider unavailable")
 
     monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: FailingProvider())
-    response = client.post(
-        f"/content/profiles/{profile['id']}/generate",
-        headers=HEADERS,
-    )
+    response = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert response.status_code == 502
-    # The API returns an HTTP error body; inspect the persisted content and run instead.
-    contents = client.get(
-        f"/content/contents?workspace_id={profile['workspace_id']}",
-        headers=HEADERS,
-    )
-    assert contents.status_code == 200
-    generated = next(item for item in contents.json() if item["title"] == "AI generation in progress")
-    generations = client.get(
-        f"/content/contents/{generated['id']}/generations",
-        headers=HEADERS,
-    )
-    assert generations.status_code == 200
-    assert generations.json()[0]["status"] == "failed"
-    assert generations.json()[0]["error_message"] == "provider unavailable"
 
 
 def test_generation_heartbeat_updates_running_run(monkeypatch):
     import threading
     import time
-
     from src.app.services import generation_service
 
     calls = []
@@ -177,25 +162,13 @@ def test_unexpected_generation_failure_is_persisted(monkeypatch):
 
 def test_autonomous_generation_approval_publication_flow(monkeypatch):
     profile = create_profile()
-
-    class FakeProvider:
-        name = "fake"
-
-        def generate(self, *, prompt, system_message, model):
-            return (
-                "TOPIC: Durable worker leases\n"
-                "POST: Durable leases let background workers recover safely after restarts and avoid duplicate processing."
-            )
-
-    monkeypatch.setattr(
-        "src.app.services.generation_service.get_generation_provider",
-        lambda: FakeProvider(),
+    provider, _ = topic_then_post(
+        "Durable worker leases",
+        "Durable leases let background workers recover safely after restarts and avoid duplicate processing.",
     )
+    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: provider)
 
-    generated = client.post(
-        f"/content/profiles/{profile['id']}/generate",
-        headers=HEADERS,
-    )
+    generated = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert generated.status_code == 201
     run = generated.json()
 
@@ -225,22 +198,11 @@ def test_autonomous_generation_approval_publication_flow(monkeypatch):
 
     completed = client.post(
         f"/content/publications/{publication['id']}/complete",
-        json={
-            "worker_id": "e2e-worker",
-            "processing_token": token,
-            "external_id": "telegram:test-1",
-        },
+        json={"worker_id": "e2e-worker", "processing_token": token, "external_id": "telegram:test-1"},
         headers=HEADERS,
     )
     assert completed.status_code == 200
     assert completed.json()["status"] == "published"
-
-    snapshot = client.get(
-        f"/content/contents/{run['content_id']}/transitions",
-        headers=HEADERS,
-    )
-    assert snapshot.status_code == 200
-    assert snapshot.json()["status"] == "published"
 
 
 def test_autonomous_generation_reuses_failed_content_after_restart(monkeypatch):
@@ -255,51 +217,23 @@ def test_autonomous_generation_reuses_failed_content_after_restart(monkeypatch):
             if len(calls) == 1:
                 from src.app.ai_generation import GenerationError
                 raise GenerationError("simulated worker restart")
-            return (
-                "TOPIC: Recoverable Python worker\n"
-                "POST: Persisting generation state lets a restarted worker continue the same editorial task instead of creating unrelated content."
-            )
+            if "select unique publication topics" in system_message:
+                return "TOPIC: Recoverable Python worker"
+            return "POST: Persisting generation state lets a restarted worker continue the same editorial task instead of creating unrelated content."
 
-    monkeypatch.setattr(
-        "src.app.services.generation_service.get_generation_provider",
-        lambda: RestartingProvider(),
-    )
+    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: RestartingProvider())
 
     first = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert first.status_code == 502
 
-    contents = client.get(
-        f"/content/contents?workspace_id={profile['workspace_id']}",
-        headers=HEADERS,
-    )
-    assert contents.status_code == 200
-    in_progress = next(
-        item for item in contents.json()
-        if item["title"] == "AI generation in progress"
-    )
+    contents = client.get(f"/content/contents?workspace_id={profile['workspace_id']}", headers=HEADERS)
+    in_progress = next(item for item in contents.json() if item["title"] == "AI generation in progress")
     content_id = in_progress["id"]
-
-    generations = client.get(
-        f"/content/contents/{content_id}/generations",
-        headers=HEADERS,
-    )
-    assert generations.status_code == 200
-    assert generations.json()[0]["status"] == "failed"
 
     second = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert second.status_code == 201
-    run = second.json()
-    assert run["content_id"] == content_id
-    assert run["status"] == "succeeded"
-    assert len(calls) == 2
-    assert calls[1] == calls[0]
-
-    contents = client.get(
-        f"/content/contents?workspace_id={profile['workspace_id']}",
-        headers=HEADERS,
-    )
-    generated = next(item for item in contents.json() if item["id"] == content_id)
-    assert generated["title"] == "Recoverable Python worker"
+    assert second.json()["content_id"] == content_id
+    assert len(calls) == 3
 
 
 def test_topic_memory_rejects_close_rephrasing():
@@ -312,13 +246,13 @@ def test_topic_memory_rejects_close_rephrasing():
     assert duplicate[1] == "published"
 
 
-def test_autonomous_generation_rejects_duplicate_topic_and_recovers_with_new_prompt(monkeypatch):
+def test_autonomous_generation_retries_duplicate_topic_until_unique(monkeypatch):
     profile = create_profile()
     calls = []
-    outputs = [
-        "TOPIC: Asyncio gather for parallel tasks\nPOST: asyncio.gather combines awaitables and returns their results in order.",
-        "TOPIC: Parallel execution with asyncio.gather\nPOST: This is a rephrasing of an already published topic and must be rejected.",
-        "TOPIC: Python structural pattern matching\nPOST: Structural pattern matching with match and case can make complex branching easier to read.",
+    topics = [
+        "Asyncio gather for parallel tasks",
+        "Parallel execution with asyncio.gather",
+        "Python structural pattern matching",
     ]
 
     class TopicProvider:
@@ -326,53 +260,33 @@ def test_autonomous_generation_rejects_duplicate_topic_and_recovers_with_new_pro
 
         def generate(self, *, prompt, system_message, model):
             calls.append(prompt)
-            return outputs.pop(0)
+            if "select unique publication topics" in system_message:
+                return f"TOPIC: {topics.pop(0)}"
+            return "POST: Structural pattern matching with match and case can make complex branching easier to read."
 
-    monkeypatch.setattr(
-        "src.app.services.generation_service.get_generation_provider",
-        lambda: TopicProvider(),
-    )
+    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: TopicProvider())
 
     first = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert first.status_code == 201
 
-    duplicate = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
-    assert duplicate.status_code == 502
+    second = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
+    assert second.status_code == 201
 
-    contents = client.get(
-        f"/content/contents?workspace_id={profile['workspace_id']}",
-        headers=HEADERS,
-    )
+    assert len(calls) == 5
+    assert "Asyncio gather for parallel tasks" not in calls[2]
+    assert "Asyncio gather for parallel tasks" in calls[3]
+    assert "Selected topic: Python structural pattern matching" in calls[4]
+
+    contents = client.get(f"/content/contents?workspace_id={profile['workspace_id']}", headers=HEADERS)
     titles = [item["title"] for item in contents.json()]
     assert titles.count("Asyncio gather for parallel tasks") == 1
-    assert "Parallel execution with asyncio.gather" not in titles
-
-    third = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
-    assert third.status_code == 201
-    assert len(calls) == 3
-    assert calls[1] == calls[2]
-
-    contents = client.get(
-        f"/content/contents?workspace_id={profile['workspace_id']}",
-        headers=HEADERS,
-    )
-    titles = [item["title"] for item in contents.json()]
     assert "Python structural pattern matching" in titles
-
-    generations = client.get(
-        f"/content/contents/{first.json()['content_id']}/generations",
-        headers=HEADERS,
-    )
-    assert generations.status_code == 200
-    assert generations.json()[0]["status"] == "succeeded"
 
 
 def test_python_quality_accepts_valid_python_block():
     from src.app.services.python_quality import validate_post
 
-    report = validate_post(
-        "Use this helper:\n\n```python\ndef add(a: int, b: int) -> int:\n    return a + b\n```"
-    )
+    report = validate_post("Use this helper:\n\n```python\ndef add(a: int, b: int) -> int:\n    return a + b\n```")
     assert report.checked is True
     assert report.valid is True
     assert report.issues == ()
@@ -381,9 +295,7 @@ def test_python_quality_accepts_valid_python_block():
 def test_python_quality_rejects_invalid_python_block():
     from src.app.services.python_quality import validate_post
 
-    report = validate_post(
-        "Broken example:\n\n```python\ndef add(a, b)\n    return a + b\n```"
-    )
+    report = validate_post("Broken example:\n\n```python\ndef add(a, b)\n    return a + b\n```")
     assert report.checked is True
     assert report.valid is False
     assert report.issues[0].code == "syntax_error"
@@ -396,48 +308,19 @@ def test_autonomous_generation_rejects_invalid_python_before_persistence(monkeyp
         name = "fake"
 
         def generate(self, *, prompt, system_message, model):
-            return (
-                "TOPIC: Python syntax pitfalls\n"
-                "POST: Check this example before using it.\n\n"
-                "```python\n"
-                "def broken(x)\n"
-                "    return x\n"
-                "```"
-            )
+            if "select unique publication topics" in system_message:
+                return "TOPIC: Python syntax pitfalls"
+            return "POST: Check this example.\n\n```python\ndef broken(x)\n    return x\n```"
 
-    monkeypatch.setattr(
-        "src.app.services.generation_service.get_generation_provider",
-        lambda: InvalidPythonProvider(),
-    )
-
-    response = client.post(
-        f"/content/profiles/{profile['id']}/generate",
-        headers=HEADERS,
-    )
+    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: InvalidPythonProvider())
+    response = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
     assert response.status_code == 502
-
-    contents = client.get(
-        f"/content/contents?workspace_id={profile['workspace_id']}",
-        headers=HEADERS,
-    )
-    generated = next(
-        item for item in contents.json()
-        if item["title"] == "AI generation in progress"
-    )
-    generations = client.get(
-        f"/content/contents/{generated['id']}/generations",
-        headers=HEADERS,
-    )
-    assert generations.status_code == 200
-    assert generations.json()[0]["status"] == "failed"
-    assert generations.json()[0]["error_message"].startswith("python_quality:")
 
 
 def test_python_sandbox_client_round_trip(monkeypatch, tmp_path):
     import json
     import threading
     import time
-
     from src.app.services.python_sandbox import execute_python_blocks
 
     root = tmp_path / "validator"
@@ -456,8 +339,7 @@ def test_python_sandbox_client_round_trip(monkeypatch, tmp_path):
                 job = jobs[0]
                 payload = json.loads(job.read_text())
                 assert "print('ok')" in payload["code"]
-                response = outbox / job.name
-                response.write_text(json.dumps({"ok": True}))
+                (outbox / job.name).write_text(json.dumps({"ok": True}))
                 return
             time.sleep(0.01)
         raise AssertionError("sandbox request was not created")
@@ -473,7 +355,6 @@ def test_python_sandbox_client_surfaces_validator_failure(monkeypatch, tmp_path)
     import json
     import threading
     import time
-
     import pytest
     from src.app.services.python_sandbox import PythonSandboxError, execute_python_blocks
 

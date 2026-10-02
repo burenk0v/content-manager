@@ -9,13 +9,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.app.db import SessionLocal
-
 from src.app.ai_generation import GenerationError, get_generation_provider
 from src.app.audit import audit
 from src.app.domain.content_state_machine import InvalidContentTransition, transition
 from src.app.models import Content, ContentProfile, ContentVersion, GenerationRun
-from src.app.services.python_quality import extract_python_blocks, format_quality_failure, validate_post
-from src.app.services.python_sandbox import PythonSandboxError, execute_python_blocks
+from src.app.services.python_quality import format_quality_failure, validate_post
 from src.app.services.topic_memory import find_duplicate_topic, load_topic_memory
 
 
@@ -34,6 +32,7 @@ class GenerationProviderFailure(Exception):
 DEFAULT_GENERATION_LEASE_TIMEOUT_SECONDS = 900
 MIN_GENERATION_LEASE_TIMEOUT_SECONDS = 60
 MAX_GENERATION_LEASE_TIMEOUT_SECONDS = 86400
+MAX_TOPIC_SELECTION_ATTEMPTS = 5
 
 
 def generation_lease_timeout_seconds() -> int:
@@ -320,48 +319,102 @@ def list_generations(db: Session, content_id: int) -> list[GenerationRun]:
     )
 
 
-def _parse_autonomous_output(text: str) -> tuple[str, str]:
+def _parse_topic_output(text: str) -> str:
     import re
 
     value = (text or "").strip()
-    match = re.search(r"TOPIC:\s*(.+?)\s*POST:\s*(.+)", value, re.S | re.I)
+    match = re.search(r"^TOPIC:\s*(.+?)\s*$", value, re.I | re.M)
     if not match:
-        match = re.search(r"TOPIC:\s*(.+?)\s*MESSAGE:\s*(.+)", value, re.S | re.I)
-    if match:
-        topic, body = match.group(1).strip().strip('"').strip("'"), match.group(2).strip()
-    else:
-        lines = value.splitlines()
-        if len(lines) >= 2:
-            topic, body = lines[0].strip().strip('"').strip("'"), "\n".join(lines[1:]).strip()
-        else:
-            raise GenerationProviderFailure("AI provider returned an invalid autonomous content format")
-    if not topic or not body:
-        raise GenerationProviderFailure("AI provider returned empty autonomous content")
-    if len(body) < 20 or len(body) > 12000:
-        raise GenerationProviderFailure("AI provider returned content outside the supported length")
-    if re.search(r"<\/?(?:script|style|iframe)\b", body, re.I):
-        raise GenerationProviderFailure("AI provider returned unsafe content")
-    if re.search(r"\[(?:insert|add|write|replace)|\{\{.*?\}\}", body, re.I):
-        raise GenerationProviderFailure("AI provider returned placeholder content")
-    return topic[:200], body
+        raise GenerationProviderFailure("AI provider returned an invalid topic format")
+    topic = match.group(1).strip().strip('"').strip("'")
+    if not topic:
+        raise GenerationProviderFailure("AI provider returned an empty topic")
+    return topic[:200]
 
 
-def build_profile_generation_prompt(profile: ContentProfile, used_topics: set[str]) -> str:
-    existing = ", ".join(sorted(used_topics)) if used_topics else "none"
+def build_profile_generation_prompt(profile: ContentProfile) -> str:
     return (
-        "You are an autonomous content editor. Choose the topic yourself; never ask the operator for one. "
-        "Create one complete publication-ready post for the configured profile. Avoid previously used topics. "
-        "Never output scripts, styles, placeholders, or an outline. Any Python code fence must be syntactically valid. Return exactly:\n"
-        "TOPIC: <short topic name>\n"
-        "POST: <ready-to-publish message>\n\n"
+        "You are an autonomous content editor. Choose exactly one topic for a publication. "
+        "Do not write the publication yet. Never ask the operator for a topic. Return exactly:\n"
+        "TOPIC: <short topic name>\n\n"
         f"Channel: {profile.channel.name or profile.channel.external_id}\n"
         f"Language: {profile.language}\n"
         f"Topic/niche: {profile.topic_niche or 'Choose a useful, timely topic in the channel niche'}\n"
         f"Tone: {profile.tone or 'Clear, useful, and natural'}\n"
         f"Content format: {profile.content_format or 'Publication-ready post'}\n"
-        f"Editorial rules: {profile.rules or 'No clickbait; no placeholders; provide useful substance'}\n"
-        f"Topic memory (do not repeat or closely rephrase): {existing}"
+        f"Editorial rules: {profile.rules or 'No clickbait; no placeholders; provide useful substance'}"
     )
+
+
+def build_profile_post_prompt(profile: ContentProfile, topic: str) -> str:
+    return (
+        "You are an autonomous content editor. Create one complete publication-ready post "
+        "for the configured profile using exactly the selected topic below. "
+        "Do not change the topic and do not ask the operator for another topic. "
+        "Never output scripts, styles, placeholders, or an outline. "
+        "Any Python code fence must be syntactically valid. Return exactly:\n"
+        "POST: <ready-to-publish message>\n\n"
+        f"Selected topic: {topic}\n"
+        f"Channel: {profile.channel.name or profile.channel.external_id}\n"
+        f"Language: {profile.language}\n"
+        f"Topic/niche: {profile.topic_niche or 'Use the selected topic within the channel niche'}\n"
+        f"Tone: {profile.tone or 'Clear, useful, and natural'}\n"
+        f"Content format: {profile.content_format or 'Publication-ready post'}\n"
+        f"Editorial rules: {profile.rules or 'No clickbait; no placeholders; provide useful substance'}"
+    )
+
+
+def _select_unique_topic(
+    profile: ContentProfile,
+    topic_memory: list[tuple[str, str]],
+    *,
+    model: str | None = None,
+) -> str:
+    provider = get_generation_provider()
+    prompt = build_profile_generation_prompt(profile)
+    duplicate_topic: str | None = None
+
+    for _attempt in range(MAX_TOPIC_SELECTION_ATTEMPTS):
+        if duplicate_topic is not None:
+            prompt = (
+                build_profile_generation_prompt(profile)
+                + "\n\n"
+                f'The topic "{duplicate_topic}" was already used. '
+                "Choose a genuinely different topic. Do not repeat or closely rephrase it. "
+                "Return only the new TOPIC line."
+            )
+        try:
+            generated_topic = provider.generate(
+                prompt=prompt,
+                system_message="You select unique publication topics. Return only the requested topic line.",
+                model=model,
+            )
+        except GenerationError as exc:
+            raise GenerationProviderFailure(str(exc)) from exc
+        except Exception as exc:
+            raise GenerationProviderFailure("Generation failed unexpectedly") from exc
+
+        topic = _parse_topic_output(generated_topic)
+        duplicate = find_duplicate_topic(topic, topic_memory)
+        if duplicate is None:
+            return topic
+        duplicate_topic = duplicate[0]
+
+    raise GenerationProviderFailure(
+        f"Unable to select a unique topic after {MAX_TOPIC_SELECTION_ATTEMPTS} attempts"
+    )
+
+
+def _parse_post_output(text: str) -> str:
+    import re
+
+    value = (text or "").strip()
+    match = re.search(r"^POST:\s*(.+)", value, re.I | re.S)
+    if match:
+        value = match.group(1).strip()
+    if not value:
+        raise GenerationProviderFailure("AI provider returned an empty post")
+    return value
 
 
 def generate_profile_content(
@@ -378,15 +431,11 @@ def generate_profile_content(
     )
     if not profile:
         raise GenerationNotFound
-
     if profile.scheduler_lease_token and profile.scheduler_lease_token != scheduler_lease_token:
         raise GenerationConflict("Profile is owned by the autonomous scheduler")
 
     recover_stale_generations(db)
-
     topic_memory = load_topic_memory(db, profile.id)
-    used_topics = {title.casefold() for title, _status in topic_memory}
-
     recoverable = (
         db.query(Content)
         .filter(
@@ -397,8 +446,8 @@ def generate_profile_content(
         .order_by(Content.created_at.asc(), Content.id.asc())
         .all()
     )
+
     content = None
-    recovery_prompt = None
     for candidate in recoverable:
         latest_run = (
             db.query(GenerationRun)
@@ -412,8 +461,6 @@ def generate_profile_content(
             raise GenerationConflict("Profile already has a generation run in progress")
         if latest_run.status == "failed":
             content = candidate
-            if not (latest_run.error_message or "").startswith("duplicate_topic:"):
-                recovery_prompt = latest_run.prompt
             break
 
     if content is None:
@@ -428,28 +475,46 @@ def generate_profile_content(
         db.add(content)
         db.flush()
 
-    topic_holder: dict[str, str] = {}
+    try:
+        topic = _select_unique_topic(profile, topic_memory, model=model)
+    except GenerationProviderFailure as exc:
+        profile.regeneration_requested = True
+        failed_run = GenerationRun(
+            content_id=content.id,
+            provider="configured",
+            model=model,
+            status="failed",
+            prompt=build_profile_generation_prompt(profile),
+            error_message=str(exc)[:4000],
+            completed_at=datetime.utcnow(),
+            lease_heartbeat_at=None,
+        )
+        db.add(failed_run)
+        db.flush()
+        audit(
+            db,
+            content.workspace_id,
+            "generation_run",
+            failed_run.id,
+            "failed",
+            event_type="content.generation_failed",
+            metadata={"provider": failed_run.provider, "model": failed_run.model, "phase": "topic_selection"},
+        )
+        db.commit()
+        raise
 
     def transform_generated(generated: str) -> str:
-        topic, body = _parse_autonomous_output(generated)
-        quality = validate_post(body)
+        value = _parse_post_output(generated)
+        quality = validate_post(value)
         if not quality.valid:
             raise GenerationProviderFailure(f"python_quality: {format_quality_failure(quality)}")
-        duplicate = find_duplicate_topic(topic, topic_memory)
-        if duplicate is not None:
-            existing, status, score = duplicate
-            raise GenerationProviderFailure(
-                f"duplicate_topic: generated topic is too similar to existing topic "
-                f"{existing!r} (status={status}, similarity={score:.2f})"
-            )
-        topic_holder["topic"] = topic
-        return body
+        return value
 
     try:
         run = generate_content(
             db,
             content.id,
-            prompt=recovery_prompt or build_profile_generation_prompt(profile, used_topics),
+            prompt=build_profile_post_prompt(profile, topic),
             system_message="You are an autonomous content editor. Produce complete publication-ready content.",
             model=model,
             transform_generated=transform_generated,
@@ -459,7 +524,7 @@ def generate_profile_content(
         db.flush()
         raise
 
-    content.title = topic_holder["topic"]
+    content.title = topic
     previous_status = content.status
     transition(previous_status, "review")
     content.status = "review"
