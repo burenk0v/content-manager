@@ -110,13 +110,14 @@ DB_PASSWORD="$(get_env DB_PASSWORD)"; DATABASE_URL="$(get_env DATABASE_URL)"
 
 echo "Installing OS packages..."
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl git libpq-dev openssl postgresql python3 python3-dev python3-full python3-venv
+DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl git libpq-dev openssl postgresql python3 python3-dev python3-venv
 if ! id "$APP_USER" >/dev/null 2>&1; then useradd --system --home-dir /var/lib/content-manager --create-home --shell /usr/sbin/nologin "$APP_USER"; fi
 install -d -o "$APP_USER" -g "$APP_USER" -m 750 /var/lib/content-manager "$VENV_ROOT"
 chown -R root:root "$APP_DIR"; chmod -R a+rX "$APP_DIR"
 systemctl enable --now postgresql
 for _ in $(seq 1 30); do pg_isready -q && break; sleep 1; done
 pg_isready -q || { echo "PostgreSQL did not become ready." >&2; exit 1; }
+if [[ "$UPDATE_MODE" == true ]]; then systemctl stop content-manager-telegram content-manager-scheduler content-manager-frontend content-manager-backend || true; fi
 if runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1; then
   runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "ALTER ROLE \"$DB_USER\" WITH LOGIN PASSWORD '$DB_PASSWORD'"
 else
@@ -128,7 +129,6 @@ if [[ "$UPDATE_MODE" == true ]]; then
   echo "Backing up database before update: $BACKUP_FILE"
   runuser -u postgres -- pg_dump -Fc --dbname="$DB_NAME" --file="$BACKUP_FILE"
   chmod 600 "$BACKUP_FILE"
-  systemctl stop content-manager-telegram content-manager-scheduler content-manager-frontend content-manager-backend || true
 fi
 
 install_venv() {
