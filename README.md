@@ -4,7 +4,7 @@
 
 <p align="center"><strong>Self-hosted AI content manager</strong><br>Autonomous generation · Telegram approvals · Automatic publishing</p>
 
-Content Manager is a Docker-based project with three main services for managing content schedules, topics, AI-assisted content generation, and Telegram publishing.
+Content Manager is a self-hosted project for managing content schedules, topics, AI-assisted content generation, and Telegram publishing. Docker Compose is the default deployment; an experimental native installer is available for 64-bit Raspberry Pi OS.
 
 ## Overview
 
