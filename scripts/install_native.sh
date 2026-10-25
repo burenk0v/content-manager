@@ -128,6 +128,7 @@ if [[ "$UPDATE_MODE" == true ]]; then
   echo "Backing up database before update: $BACKUP_FILE"
   runuser -u postgres -- pg_dump -Fc --dbname="$DB_NAME" --file="$BACKUP_FILE"
   chmod 600 "$BACKUP_FILE"
+  systemctl stop content-manager-telegram content-manager-scheduler content-manager-frontend content-manager-backend || true
 fi
 
 install_venv() {
