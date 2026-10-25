@@ -140,6 +140,7 @@ Required configuration:
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Release checklist](docs/RELEASE_CHECKLIST.md)
 - [Self-hosting](docs/SELF_HOSTING.md)
+- [Native Raspberry Pi OS installation (experimental, no Docker)](docs/NATIVE_INSTALL_RASPBERRY_PI.md)
 
 ## Supported Languages
 
