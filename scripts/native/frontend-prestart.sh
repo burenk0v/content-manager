@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cd /opt/content-manager/frontend
-python src/manage.py migrate --noinput
+/opt/content-manager-venvs/frontend/bin/python src/manage.py migrate --noinput
 python src/manage.py shell <<'PY'
 import os
 from django.contrib.auth import get_user_model
