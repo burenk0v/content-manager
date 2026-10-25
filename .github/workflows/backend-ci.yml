@@ -26,6 +26,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - run: bash -n ../scripts/install_native.sh && bash -n ../scripts/native/frontend-prestart.sh
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
