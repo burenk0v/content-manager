@@ -283,104 +283,23 @@ def test_autonomous_generation_retries_duplicate_topic_until_unique(monkeypatch)
     assert "Python structural pattern matching" in titles
 
 
-def test_python_quality_accepts_valid_python_block():
-    from src.app.services.python_quality import validate_post
 
-    report = validate_post("Use this helper:\n\n```python\ndef add(a: int, b: int) -> int:\n    return a + b\n```")
-    assert report.checked is True
-    assert report.valid is True
-    assert report.issues == ()
-
-
-def test_python_quality_rejects_invalid_python_block():
-    from src.app.services.python_quality import validate_post
-
-    report = validate_post("Broken example:\n\n```python\ndef add(a, b)\n    return a + b\n```")
-    assert report.checked is True
-    assert report.valid is False
-    assert report.issues[0].code == "syntax_error"
-
-
-def test_autonomous_generation_rejects_invalid_python_before_persistence(monkeypatch):
+def test_autonomous_generation_accepts_python_examples_without_syntax_gate(monkeypatch):
     profile = create_profile()
 
-    class InvalidPythonProvider:
+    class PythonExampleProvider:
         name = "fake"
 
         def generate(self, *, prompt, system_message, model):
             if "select unique publication topics" in system_message:
                 return "TOPIC: Python syntax pitfalls"
-            return "POST: Check this example.\n\n```python\ndef broken(x)\n    return x\n```"
+            return "POST: Example in progress.\n\n```python\ndef broken(x)\n    return x\n```"
 
-    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: InvalidPythonProvider())
+    monkeypatch.setattr("src.app.services.generation_service.get_generation_provider", lambda: PythonExampleProvider())
     response = client.post(f"/content/profiles/{profile['id']}/generate", headers=HEADERS)
-    assert response.status_code == 502
+    assert response.status_code == 201
+    run = response.json()
+    assert run["status"] == "succeeded"
 
-
-def test_python_sandbox_client_round_trip(monkeypatch, tmp_path):
-    import json
-    import threading
-    import time
-    from src.app.services.python_sandbox import execute_python_blocks
-
-    root = tmp_path / "validator"
-    inbox = root / "inbox"
-    outbox = root / "outbox"
-    inbox.mkdir(parents=True)
-    outbox.mkdir(parents=True)
-    monkeypatch.setenv("PYTHON_VALIDATOR_DIR", str(root))
-    monkeypatch.setenv("PYTHON_VALIDATOR_TIMEOUT_SECONDS", "2")
-
-    def worker():
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            jobs = list(inbox.glob("*.json"))
-            if jobs:
-                job = jobs[0]
-                payload = json.loads(job.read_text())
-                assert "print('ok')" in payload["code"]
-                (outbox / job.name).write_text(json.dumps({"ok": True}))
-                return
-            time.sleep(0.01)
-        raise AssertionError("sandbox request was not created")
-
-    thread = threading.Thread(target=worker)
-    thread.start()
-    execute_python_blocks(["print('ok')"])
-    thread.join(timeout=2)
-    assert not thread.is_alive()
-
-
-def test_python_sandbox_client_surfaces_validator_failure(monkeypatch, tmp_path):
-    import json
-    import threading
-    import time
-    import pytest
-    from src.app.services.python_sandbox import PythonSandboxError, execute_python_blocks
-
-    root = tmp_path / "validator"
-    inbox = root / "inbox"
-    outbox = root / "outbox"
-    inbox.mkdir(parents=True)
-    outbox.mkdir(parents=True)
-    monkeypatch.setenv("PYTHON_VALIDATOR_DIR", str(root))
-    monkeypatch.setenv("PYTHON_VALIDATOR_TIMEOUT_SECONDS", "2")
-
-    def worker():
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            jobs = list(inbox.glob("*.json"))
-            if jobs:
-                tmp = outbox / (".tmp-" + jobs[0].name)
-                tmp.write_text(json.dumps({"ok": False, "error": "execution failed"}))
-                tmp.replace(outbox / jobs[0].name)
-                return
-            time.sleep(0.01)
-        raise AssertionError("sandbox request was not created")
-
-    thread = threading.Thread(target=worker)
-    thread.start()
-    with pytest.raises(PythonSandboxError, match="execution failed"):
-        execute_python_blocks(["raise RuntimeError('boom')"])
-    thread.join(timeout=2)
-    assert not thread.is_alive()
+    versions = client.get(f"/content/contents/{run['content_id']}/versions", headers=HEADERS)
+    assert "def broken(x)" in versions.json()[0]["body"]

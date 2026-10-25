@@ -13,7 +13,6 @@ from src.app.ai_generation import GenerationError, get_generation_provider
 from src.app.audit import audit
 from src.app.domain.content_state_machine import InvalidContentTransition, transition
 from src.app.models import Content, ContentProfile, ContentVersion, GenerationRun
-from src.app.services.python_quality import format_quality_failure, validate_post
 from src.app.services.topic_memory import find_duplicate_topic, load_topic_memory
 
 
@@ -351,8 +350,7 @@ def build_profile_post_prompt(profile: ContentProfile, topic: str) -> str:
         "You are an autonomous content editor. Create one complete publication-ready post "
         "for the configured profile using exactly the selected topic below. "
         "Do not change the topic and do not ask the operator for another topic. "
-        "Never output scripts, styles, placeholders, or an outline. "
-        "Any Python code fence must be syntactically valid. Return exactly:\n"
+        "Never output scripts, styles, placeholders, or an outline. Return exactly:\n"
         "POST: <ready-to-publish message>\n\n"
         f"Selected topic: {topic}\n"
         f"Channel: {profile.channel.name or profile.channel.external_id}\n"
@@ -504,11 +502,7 @@ def generate_profile_content(
         raise
 
     def transform_generated(generated: str) -> str:
-        value = _parse_post_output(generated)
-        quality = validate_post(value)
-        if not quality.valid:
-            raise GenerationProviderFailure(f"python_quality: {format_quality_failure(quality)}")
-        return value
+        return _parse_post_output(generated)
 
     try:
         run = generate_content(
