@@ -122,7 +122,7 @@ Required configuration:
 | `GENERATION_LEASE_TIMEOUT_SECONDS` | `900` | Generation lease expiry window; active runs heartbeat during provider calls |
 | `SCHEDULER_INTERVAL_SECONDS` | `15` | Autonomous scheduler polling interval |
 | `SCHEDULER_LEASE_TIMEOUT_SECONDS` | `900` | Autonomous scheduler lease expiry window |
-| `MAX_CONCURRENT_GENERATIONS` | `2` | Maximum concurrent autonomous generation workers |\n| `PYTHON_VALIDATOR_DIR` | `/var/lib/python-validator` | Shared directory for validator jobs |\n| `PYTHON_VALIDATOR_TIMEOUT_SECONDS` | `8` | Python validator execution timeout |
+| `MAX_CONCURRENT_GENERATIONS` | `2` | Maximum concurrent autonomous generation workers |\n
 | `PUBLICATION_MAX_ATTEMPTS` | `5` | Maximum publication attempts |
 | `PUBLICATION_RETRY_DELAY_SECONDS` | `60` | Initial retry delay; exponential backoff is applied |
 | `PUBLICATION_RETRY_MAX_DELAY_SECONDS` | `3600` | Maximum retry delay |
