@@ -113,7 +113,7 @@ apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl git libpq-dev openssl postgresql python3 python3-dev python3-full python3-venv
 if ! id "$APP_USER" >/dev/null 2>&1; then useradd --system --home-dir /var/lib/content-manager --create-home --shell /usr/sbin/nologin "$APP_USER"; fi
 install -d -o "$APP_USER" -g "$APP_USER" -m 750 /var/lib/content-manager "$VENV_ROOT"
-chmod -R a+rX "$APP_DIR"; chown root:root "$APP_DIR"
+chown -R root:root "$APP_DIR"; chmod -R a+rX "$APP_DIR"
 systemctl enable --now postgresql
 for _ in $(seq 1 30); do pg_isready -q && break; sleep 1; done
 pg_isready -q || { echo "PostgreSQL did not become ready." >&2; exit 1; }
@@ -141,6 +141,7 @@ install_venv frontend "$APP_DIR/frontend/src/requirements.txt"
 install_venv telegram "$APP_DIR/telegram/src/requirements.txt"
 
 echo "Applying backend database migrations..."
+cd "$APP_DIR/backend"
 runuser -u "$APP_USER" -- env DATABASE_URL="$DATABASE_URL" "$VENV_ROOT/backend/bin/alembic" -c "$APP_DIR/backend/alembic.ini" upgrade head
 
 cat >/etc/systemd/system/content-manager-backend.service <<EOF
